@@ -233,19 +233,32 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             // Get highlight spans for this line
             let hl_spans = app.highlighter.highlight(app.current_lang, content);
 
+            // Track character position for horizontal scroll
+            let mut char_pos = 0usize;
+            let scroll_x = app.scroll_x;
+
             for hl in hl_spans {
-                let text: String = content
-                    .get(hl.start..hl.end)
-                    .unwrap_or("")
-                    .chars()
-                    .skip(if hl.start == 0 { app.scroll_x } else { 0 })
-                    .map(sanitize_char)
-                    .collect();
+                let span_text = content.get(hl.start..hl.end).unwrap_or("");
+                let span_char_count = span_text.chars().count();
+                let span_end_pos = char_pos + span_char_count;
+
+                // Skip spans entirely before scroll offset
+                if span_end_pos <= scroll_x {
+                    char_pos = span_end_pos;
+                    continue;
+                }
+
+                // Calculate how many chars to skip in this span
+                let skip = scroll_x.saturating_sub(char_pos);
+
+                let text: String = span_text.chars().skip(skip).map(sanitize_char).collect();
 
                 if !text.is_empty() {
                     let fg = style_to_color(hl.style_id);
                     spans.push(Span::styled(text, Style::default().fg(fg).bg(bg_color)));
                 }
+
+                char_pos = span_end_pos;
             }
         }
 
