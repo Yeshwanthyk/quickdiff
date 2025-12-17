@@ -1,0 +1,39 @@
+[package]
+name = "quickdiff"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# UI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Diff
+similar = "2.6"
+
+# Highlighting
+tree-sitter = "0.24"
+tree-sitter-highlight = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+
+# Persistence
+directories = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+criterion = "0.5"
+
+[[bench]]
+name = "diff_bench"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
