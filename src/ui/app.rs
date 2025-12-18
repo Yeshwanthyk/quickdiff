@@ -15,6 +15,14 @@ pub enum Focus {
     Diff,
 }
 
+/// UI mode (normal vs input modes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    Normal,
+    AddComment,
+}
+
 /// Application state.
 pub struct App {
     /// Repository root.
@@ -49,8 +57,14 @@ pub struct App {
     pub scroll_x: usize,
 
     // UI state
+    /// Current UI mode.
+    pub mode: Mode,
+    /// Draft comment text (when in AddComment mode).
+    pub draft_comment: String,
     /// Last error message to display.
     pub error_msg: Option<String>,
+    /// Status message to display (non-error).
+    pub status_msg: Option<String>,
     /// Whether the UI needs redrawing.
     pub dirty: bool,
 
@@ -84,7 +98,10 @@ impl App {
             is_binary: false,
             scroll_y: 0,
             scroll_x: 0,
+            mode: Mode::default(),
+            draft_comment: String::new(),
             error_msg: None,
+            status_msg: None,
             dirty: true,
             highlighter: HighlighterCache::new(),
             current_lang: LanguageId::Plain,
@@ -310,5 +327,112 @@ impl App {
     /// Clear dirty flag after drawing.
     pub fn clear_dirty(&mut self) {
         self.dirty = false;
+    }
+
+    /// Start adding a comment on the current hunk.
+    pub fn start_add_comment(&mut self) {
+        // Check if we have a diff and are on a hunk
+        let Some(diff) = &self.diff else {
+            self.error_msg = Some("No diff available".to_string());
+            self.dirty = true;
+            return;
+        };
+
+        if diff.hunks.is_empty() {
+            self.error_msg = Some("No hunks to comment on".to_string());
+            self.dirty = true;
+            return;
+        }
+
+        // Check if current scroll position is within a hunk
+        if diff.hunk_at_row(self.scroll_y).is_none() {
+            self.error_msg = Some("Not on a hunk - navigate to a hunk first".to_string());
+            self.dirty = true;
+            return;
+        }
+
+        self.mode = Mode::AddComment;
+        self.draft_comment.clear();
+        self.error_msg = None;
+        self.status_msg = None;
+        self.dirty = true;
+    }
+
+    /// Cancel adding a comment.
+    pub fn cancel_add_comment(&mut self) {
+        self.mode = Mode::Normal;
+        self.draft_comment.clear();
+        self.dirty = true;
+    }
+
+    /// Save the current draft comment.
+    pub fn save_comment(&mut self) {
+        use crate::core::{selector_from_hunk, Anchor, CommentStore, FileCommentStore, Selector};
+
+        if self.draft_comment.trim().is_empty() {
+            self.error_msg = Some("Comment cannot be empty".to_string());
+            self.dirty = true;
+            return;
+        }
+
+        let Some(diff) = &self.diff else {
+            self.error_msg = Some("No diff available".to_string());
+            self.mode = Mode::Normal;
+            self.dirty = true;
+            return;
+        };
+
+        let Some(hunk_idx) = diff.hunk_at_row(self.scroll_y) else {
+            self.error_msg = Some("No hunk at current position".to_string());
+            self.mode = Mode::Normal;
+            self.dirty = true;
+            return;
+        };
+
+        let Some(file) = self.selected_file() else {
+            self.error_msg = Some("No file selected".to_string());
+            self.mode = Mode::Normal;
+            self.dirty = true;
+            return;
+        };
+
+        let path = file.path.clone();
+
+        // Build selector from hunk
+        let Some(selector) = selector_from_hunk(diff, hunk_idx) else {
+            self.error_msg = Some("Failed to create comment anchor".to_string());
+            self.mode = Mode::Normal;
+            self.dirty = true;
+            return;
+        };
+
+        let anchor = Anchor {
+            selectors: vec![Selector::DiffHunkV1(selector)],
+        };
+
+        // Save to store
+        let mut store = match FileCommentStore::open(&self.repo) {
+            Ok(s) => s,
+            Err(e) => {
+                self.error_msg = Some(format!("Failed to open comment store: {}", e));
+                self.mode = Mode::Normal;
+                self.dirty = true;
+                return;
+            }
+        };
+
+        match store.add(path, self.draft_comment.clone(), anchor) {
+            Ok(id) => {
+                self.status_msg = Some(format!("Comment {} saved", id));
+                self.error_msg = None;
+            }
+            Err(e) => {
+                self.error_msg = Some(format!("Failed to save comment: {}", e));
+            }
+        }
+
+        self.mode = Mode::Normal;
+        self.draft_comment.clear();
+        self.dirty = true;
     }
 }

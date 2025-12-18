@@ -103,6 +103,14 @@ impl DiffResult {
     pub fn has_changes(&self) -> bool {
         self.rows.iter().any(|r| r.kind != ChangeKind::Equal)
     }
+
+    /// Find the hunk containing a given row.
+    /// Returns the hunk index (0-based) or None if row is not within any hunk.
+    pub fn hunk_at_row(&self, row: usize) -> Option<usize> {
+        self.hunks
+            .iter()
+            .position(|h| row >= h.start_row && row < h.start_row + h.row_count)
+    }
 }
 
 /// Intermediate change representation before pairing.
@@ -482,5 +490,32 @@ mod tests {
 
         let viewport: Vec<_> = result.render_rows(0, 3).collect();
         assert!(viewport.len() <= 3);
+    }
+
+    #[test]
+    fn hunk_at_row_basic() {
+        let old = TextBuffer::new(b"line1\nold\nline3\n");
+        let new = TextBuffer::new(b"line1\nnew\nline3\n");
+        let result = DiffResult::compute(&old, &new);
+
+        assert!(!result.hunks.is_empty());
+        let hunk = &result.hunks[0];
+
+        // Row within hunk should return Some(0)
+        assert_eq!(result.hunk_at_row(hunk.start_row), Some(0));
+        assert_eq!(
+            result.hunk_at_row(hunk.start_row + hunk.row_count - 1),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn hunk_at_row_outside() {
+        let old = TextBuffer::new(b"same\n");
+        let new = TextBuffer::new(b"same\n");
+        let result = DiffResult::compute(&old, &new);
+
+        // No hunks, so any row should return None
+        assert!(result.hunk_at_row(0).is_none());
     }
 }

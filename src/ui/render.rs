@@ -11,7 +11,7 @@ use ratatui::{
 use crate::core::{ChangeKind, FileChangeKind, ViewedStore};
 use crate::highlight::StyleId;
 
-use super::app::{App, Focus};
+use super::app::{App, Focus, Mode};
 
 /// Max width for path display in sidebar.
 const SIDEBAR_PATH_WIDTH: usize = 26;
@@ -281,6 +281,17 @@ fn sanitize_char(c: char) -> char {
 
 /// Render the bottom bar with key hints or error message.
 fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
+    // AddComment mode: show input prompt
+    if app.mode == Mode::AddComment {
+        let text = format!(
+            " Comment: {}█  (Enter: save, Esc: cancel)",
+            app.draft_comment
+        );
+        let para = Paragraph::new(text).style(Style::default().bg(Color::Blue).fg(Color::White));
+        frame.render_widget(para, area);
+        return;
+    }
+
     // Show error if present
     if let Some(ref err) = app.error_msg {
         let para = Paragraph::new(format!(" Error: {}", err))
@@ -289,10 +300,18 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // Show status message if present
+    if let Some(ref msg) = app.status_msg {
+        let para = Paragraph::new(format!(" {}", msg))
+            .style(Style::default().bg(Color::Green).fg(Color::White));
+        frame.render_widget(para, area);
+        return;
+    }
+
     let hints = match app.focus {
         Focus::Sidebar => "j/k: navigate  Enter: open  Space: viewed  Tab: switch  q: quit",
         Focus::Diff => {
-            "j/k: scroll  h/l: horizontal  {/}: hunks  Space: viewed  Tab: switch  q: quit"
+            "j/k: scroll  h/l: horizontal  {/}: hunks  c: comment  Space: viewed  Tab: switch  q: quit"
         }
     };
 

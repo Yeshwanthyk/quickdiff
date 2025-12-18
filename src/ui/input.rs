@@ -2,7 +2,7 @@
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
-use super::app::{App, Focus};
+use super::app::{App, Focus, Mode};
 
 /// Handle a crossterm event.
 /// Returns true if the event was handled.
@@ -15,7 +15,12 @@ pub fn handle_input(app: &mut App, event: Event) -> bool {
 
 /// Handle a key event.
 fn handle_key(app: &mut App, key: KeyEvent) -> bool {
-    // Global keys
+    // Handle input mode first
+    if app.mode == Mode::AddComment {
+        return handle_add_comment_key(app, key);
+    }
+
+    // Global keys (only in Normal mode)
     match key.code {
         KeyCode::Char('q') => {
             app.should_quit = true;
@@ -115,6 +120,35 @@ fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('g') => {
             // Go to start
             app.scroll_y = 0;
+            true
+        }
+        KeyCode::Char('c') => {
+            app.start_add_comment();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Handle keys when in AddComment mode.
+fn handle_add_comment_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.cancel_add_comment();
+            true
+        }
+        KeyCode::Enter => {
+            app.save_comment();
+            true
+        }
+        KeyCode::Backspace => {
+            app.draft_comment.pop();
+            app.mark_dirty();
+            true
+        }
+        KeyCode::Char(c) => {
+            app.draft_comment.push(c);
+            app.mark_dirty();
             true
         }
         _ => false,

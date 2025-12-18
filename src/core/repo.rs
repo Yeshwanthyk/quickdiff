@@ -58,7 +58,10 @@ impl RepoRoot {
 }
 
 /// A repository-relative path. Never absolute.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct RelPath(String);
 
 impl RelPath {

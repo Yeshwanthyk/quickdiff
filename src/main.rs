@@ -2,6 +2,7 @@
 
 use std::io::{self, Write};
 use std::panic;
+use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -11,6 +12,7 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 
+use quickdiff::cli::run_comments_command;
 use quickdiff::core::RepoRoot;
 use quickdiff::ui::{handle_input, render, App};
 
@@ -33,7 +35,52 @@ impl Drop for TerminalGuard {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
+    // Parse args for CLI dispatch
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Check for CLI subcommands
+    if args.first().map(|s| s.as_str()) == Some("comments") {
+        return run_cli_comments(&args[1..]);
+    }
+
+    // Run TUI
+    match run_tui() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Run CLI comments command.
+fn run_cli_comments(args: &[String]) -> ExitCode {
+    let cwd = match std::env::current_dir() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to get current directory: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let repo = match RepoRoot::discover(&cwd) {
+        Ok(repo) => repo,
+        Err(quickdiff::core::RepoError::NotARepo) => {
+            eprintln!("Error: Not inside a git repository");
+            return ExitCode::from(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    run_comments_command(&repo, args)
+}
+
+/// Run the TUI application.
+fn run_tui() -> Result<()> {
     // Set panic hook to ensure terminal cleanup
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
