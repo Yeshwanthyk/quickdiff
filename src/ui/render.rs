@@ -25,42 +25,53 @@ use super::app::{App, Focus, Mode};
 mod palette {
     use ratatui::style::Color;
 
-    // Base grays (dark to light)
-    pub const BG_DARK: Color = Color::Rgb(22, 22, 26);       // Near black
-    pub const BG_SURFACE: Color = Color::Rgb(30, 30, 35);    // Panels
-    pub const BG_ELEVATED: Color = Color::Rgb(40, 40, 46);   // Headers, overlays
-    pub const BORDER_DIM: Color = Color::Rgb(55, 55, 65);    // Unfocused borders
-    pub const TEXT_MUTED: Color = Color::Rgb(90, 90, 100);   // Secondary text
-    pub const TEXT_DIM: Color = Color::Rgb(120, 120, 130);   // Tertiary
-    pub const TEXT_NORMAL: Color = Color::Rgb(180, 180, 185); // Primary text
-    pub const TEXT_BRIGHT: Color = Color::Rgb(220, 220, 225); // Emphasized
+    // Base grays (dark to light) - refined for hierarchy
+    pub const BG_DARK: Color = Color::Rgb(18, 18, 22);       // Deep black
+    pub const BG_SURFACE: Color = Color::Rgb(26, 26, 32);    // Panels
+    pub const BG_ELEVATED: Color = Color::Rgb(36, 36, 44);   // Headers, overlays
+    pub const BG_SELECTED: Color = Color::Rgb(45, 45, 55);   // Selected items
+
+    // Borders & separators (very subtle)
+    pub const BORDER_DIM: Color = Color::Rgb(50, 50, 60);    // Unfocused borders
+    pub const GUTTER_SEP: Color = Color::Rgb(38, 38, 46);    // Nearly invisible gutter
+    pub const PANE_DIVIDER: Color = Color::Rgb(55, 55, 65);  // Between old/new panes
+
+    // Text hierarchy (critical for glanceability)
+    pub const TEXT_FAINT: Color = Color::Rgb(55, 55, 65);    // Line numbers, minimal
+    pub const TEXT_MUTED: Color = Color::Rgb(80, 80, 92);    // Secondary info
+    pub const TEXT_DIM: Color = Color::Rgb(110, 110, 125);   // Tertiary
+    pub const TEXT_NORMAL: Color = Color::Rgb(175, 175, 185); // Primary text
+    pub const TEXT_BRIGHT: Color = Color::Rgb(230, 230, 235); // Emphasized
 
     // Accent (teal/cyan family)
     pub const ACCENT: Color = Color::Rgb(80, 200, 200);      // Focus, interactive
-    pub const ACCENT_DIM: Color = Color::Rgb(60, 140, 140);  // Subtle accent
+    pub const ACCENT_DIM: Color = Color::Rgb(55, 130, 130);  // Subtle accent
 
-    // Diff backgrounds (very subtle, won't wash out syntax)
-    pub const DIFF_DELETE_BG: Color = Color::Rgb(50, 28, 32);   // Soft red tint
-    pub const DIFF_INSERT_BG: Color = Color::Rgb(28, 50, 35);   // Soft green tint
-    pub const DIFF_EMPTY_BG: Color = Color::Rgb(25, 25, 28);    // Missing line
+    // Diff backgrounds (subtle tints, preserves syntax colors)
+    pub const DIFF_DELETE_BG: Color = Color::Rgb(45, 25, 30);   // Soft red tint
+    pub const DIFF_INSERT_BG: Color = Color::Rgb(25, 45, 32);   // Soft green tint
+    pub const DIFF_EMPTY_BG: Color = Color::Rgb(22, 22, 26);    // Missing line placeholder
 
-    // Status colors
-    pub const SUCCESS: Color = Color::Rgb(80, 180, 100);
-    pub const ERROR: Color = Color::Rgb(220, 80, 80);
-    pub const WARNING: Color = Color::Rgb(220, 180, 80);
+    // Status colors (slightly muted for polish)
+    pub const SUCCESS: Color = Color::Rgb(85, 185, 105);
+    pub const ERROR: Color = Color::Rgb(215, 85, 85);
+    pub const WARNING: Color = Color::Rgb(215, 175, 80);
 
-    // Syntax highlighting (vibrant to pop against muted UI)
+    // Syntax highlighting (vibrant - these are the stars)
     pub const SYN_KEYWORD: Color = Color::Rgb(198, 120, 221);   // Purple
     pub const SYN_TYPE: Color = Color::Rgb(229, 192, 123);      // Gold
     pub const SYN_FUNCTION: Color = Color::Rgb(97, 175, 239);   // Blue
     pub const SYN_STRING: Color = Color::Rgb(152, 195, 121);    // Green
     pub const SYN_NUMBER: Color = Color::Rgb(209, 154, 102);    // Orange
-    pub const SYN_COMMENT: Color = Color::Rgb(92, 99, 112);     // Gray
+    pub const SYN_COMMENT: Color = Color::Rgb(92, 99, 112);     // Gray (intentionally dim)
     pub const SYN_OPERATOR: Color = Color::Rgb(171, 178, 191);  // Light gray
-    pub const SYN_PUNCTUATION: Color = Color::Rgb(92, 99, 112); // Dim
+    pub const SYN_PUNCTUATION: Color = Color::Rgb(120, 120, 135); // Subtle but visible
     pub const SYN_CONSTANT: Color = Color::Rgb(86, 182, 194);   // Cyan
     pub const SYN_PROPERTY: Color = Color::Rgb(224, 108, 117);  // Red
     pub const SYN_ATTRIBUTE: Color = Color::Rgb(229, 192, 123); // Gold
+
+    // Sidebar indicators
+    pub const INDICATOR_SELECTED: Color = Color::Rgb(80, 200, 200); // Selection bar
 }
 
 use palette::*;
@@ -129,29 +140,45 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 // ============================================================================
 
 fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let file_name = app
-        .selected_file()
-        .map(|f| f.path.as_str())
-        .unwrap_or("No files");
+    let file = app.selected_file();
+    let file_name = file.map(|f| f.path.as_str()).unwrap_or("No files");
 
-    let mut spans = vec![
-        Span::styled(" ", Style::default().bg(BG_ELEVATED)),
-        Span::styled(
-            file_name,
-            Style::default().fg(TEXT_BRIGHT).bg(BG_ELEVATED),
-        ),
-    ];
+    // Get file change kind for indicator
+    let kind_indicator = file.map(|f| match f.kind {
+        FileChangeKind::Added => ("A", SUCCESS),
+        FileChangeKind::Modified => ("M", WARNING),
+        FileChangeKind::Deleted => ("D", ERROR),
+        FileChangeKind::Untracked => ("?", TEXT_MUTED),
+        FileChangeKind::Renamed => ("R", ACCENT_DIM),
+    });
+
+    let mut spans = vec![Span::styled("  ", Style::default().bg(BG_ELEVATED))];
+
+    // Change kind badge
+    if let Some((kind, color)) = kind_indicator {
+        spans.push(Span::styled(
+            kind,
+            Style::default().fg(color).bg(BG_ELEVATED).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled("  ", Style::default().bg(BG_ELEVATED)));
+    }
+
+    // Filename (prominent)
+    spans.push(Span::styled(
+        file_name,
+        Style::default().fg(TEXT_BRIGHT).bg(BG_ELEVATED).add_modifier(Modifier::BOLD),
+    ));
 
     if app.is_current_viewed() {
         spans.push(Span::styled(
-            " ✓",
+            "  ✓ viewed",
             Style::default().fg(SUCCESS).bg(BG_ELEVATED),
         ));
     }
 
     if app.is_binary {
         spans.push(Span::styled(
-            " [binary]",
+            "  [binary]",
             Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
         ));
     }
@@ -196,6 +223,10 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         .enumerate()
         .map(|(idx, file)| {
             let is_selected = idx == app.selected_idx;
+            let is_viewed = app.viewed.is_viewed(&file.path);
+
+            // Selection indicator (left edge)
+            let select_indicator = if is_selected { "▌" } else { " " };
 
             // Change kind indicator with color
             let (kind_char, kind_color) = match file.kind {
@@ -206,11 +237,8 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
                 FileChangeKind::Renamed => ('R', ACCENT_DIM),
             };
 
-            let viewed_char = if app.viewed.is_viewed(&file.path) {
-                '✓'
-            } else {
-                ' '
-            };
+            let viewed_char = if is_viewed { '✓' } else { '·' };
+            let viewed_color = if is_viewed { SUCCESS } else { TEXT_FAINT };
 
             // Ellipsize path
             let path = file.path.as_str();
@@ -220,19 +248,23 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
                 path.to_string()
             };
 
+            // Text brightness based on state
             let text_color = if is_selected {
                 TEXT_BRIGHT
+            } else if is_viewed {
+                TEXT_DIM  // Viewed files are dimmer
             } else {
                 TEXT_NORMAL
             };
 
             let line = Line::from(vec![
+                Span::styled(
+                    select_indicator,
+                    Style::default().fg(if is_selected { INDICATOR_SELECTED } else { BG_SURFACE }),
+                ),
                 Span::styled(format!("{}", kind_char), Style::default().fg(kind_color)),
                 Span::styled(" ", Style::default()),
-                Span::styled(
-                    format!("{}", viewed_char),
-                    Style::default().fg(if viewed_char == '✓' { SUCCESS } else { TEXT_MUTED }),
-                ),
+                Span::styled(format!("{}", viewed_char), Style::default().fg(viewed_color)),
                 Span::styled(" ", Style::default()),
                 Span::styled(display_path, Style::default().fg(text_color)),
             ]);
@@ -257,9 +289,8 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         ))
         .style(Style::default().bg(BG_SURFACE));
 
-    let highlight_style = Style::default()
-        .bg(BG_ELEVATED)
-        .add_modifier(Modifier::BOLD);
+    // Selected row gets subtle background
+    let highlight_style = Style::default().bg(BG_SELECTED);
 
     let list = List::new(items)
         .block(block)
@@ -312,14 +343,28 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    // Split into old/new panes
+    // Split into old/new panes with divider
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Length(1),      // Divider
+            Constraint::Percentage(50),
+        ])
         .split(inner);
 
     render_diff_pane(frame, app, panes[0], true);  // Old
-    render_diff_pane(frame, app, panes[1], false); // New
+    render_pane_divider(frame, panes[1]);          // Divider
+    render_diff_pane(frame, app, panes[2], false); // New
+}
+
+/// Render vertical divider between old/new panes.
+fn render_pane_divider(frame: &mut Frame, area: Rect) {
+    let lines: Vec<Line> = (0..area.height)
+        .map(|_| Line::from(Span::styled("│", Style::default().fg(PANE_DIVIDER))))
+        .collect();
+    let para = Paragraph::new(lines).style(Style::default().bg(BG_DARK));
+    frame.render_widget(para, area);
 }
 
 fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
@@ -355,20 +400,20 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             }
         };
 
-        // Line number gutter
+        // Line number gutter (very dim - reference only, not primary)
         let line_num_str = line_num
-            .map(|n| format!("{:>4} ", n))
-            .unwrap_or_else(|| "     ".to_string());
+            .map(|n| format!("{:>4}", n))
+            .unwrap_or_else(|| "    ".to_string());
 
         let mut spans = vec![Span::styled(
             line_num_str,
-            Style::default().fg(TEXT_MUTED).bg(bg_color),
+            Style::default().fg(TEXT_FAINT).bg(bg_color),
         )];
 
-        // Separator
+        // Separator (nearly invisible)
         spans.push(Span::styled(
-            "│ ",
-            Style::default().fg(BORDER_DIM).bg(bg_color),
+            " │ ",
+            Style::default().fg(GUTTER_SEP).bg(bg_color),
         ));
 
         if content.is_empty() {
