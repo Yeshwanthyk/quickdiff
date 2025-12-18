@@ -4,6 +4,17 @@ use similar::{ChangeTag, TextDiff};
 
 use crate::core::TextBuffer;
 
+/// A span within a line indicating changed/unchanged regions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineSpan {
+    /// Byte start offset in the line.
+    pub start: usize,
+    /// Byte end offset in the line.
+    pub end: usize,
+    /// Whether this span represents changed content.
+    pub changed: bool,
+}
+
 /// A single line reference in the diff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineRef {
@@ -11,6 +22,8 @@ pub struct LineRef {
     pub line_num: usize,
     /// The line content (without trailing newline).
     pub content: String,
+    /// Inline diff spans for word-level highlighting (only for Replace rows).
+    pub inline_spans: Option<Vec<InlineSpan>>,
 }
 
 /// Kind of change for a render row.
@@ -199,10 +212,12 @@ fn pair_changes(changes: &[Change]) -> Vec<RenderRow> {
                     old: Some(LineRef {
                         line_num: *old_line,
                         content: content.clone(),
+                        inline_spans: None,
                     }),
                     new: Some(LineRef {
                         line_num: *new_line,
                         content: content.clone(),
+                        inline_spans: None,
                     }),
                     kind: ChangeKind::Equal,
                 });
@@ -230,21 +245,35 @@ fn pair_changes(changes: &[Change]) -> Vec<RenderRow> {
                 // Pair deletes with inserts
                 let max_len = deletes.len().max(inserts.len());
                 for j in 0..max_len {
-                    let old = deletes.get(j).map(|c| {
+                    let delete_change = deletes.get(j);
+                    let insert_change = inserts.get(j);
+
+                    // Compute inline spans for Replace rows (both old and new exist)
+                    let (old_spans, new_spans) = match (delete_change, insert_change) {
+                        (
+                            Some(Change::Delete { content: old_content, .. }),
+                            Some(Change::Insert { content: new_content, .. }),
+                        ) => compute_inline_diff(old_content, new_content),
+                        _ => (None, None),
+                    };
+
+                    let old = delete_change.map(|c| {
                         if let Change::Delete { old_line, content } = c {
                             LineRef {
                                 line_num: *old_line,
                                 content: content.clone(),
+                                inline_spans: old_spans.clone(),
                             }
                         } else {
                             unreachable!()
                         }
                     });
-                    let new = inserts.get(j).map(|c| {
+                    let new = insert_change.map(|c| {
                         if let Change::Insert { new_line, content } = c {
                             LineRef {
                                 line_num: *new_line,
                                 content: content.clone(),
+                                inline_spans: new_spans.clone(),
                             }
                         } else {
                             unreachable!()
@@ -265,6 +294,99 @@ fn pair_changes(changes: &[Change]) -> Vec<RenderRow> {
     }
 
     rows
+}
+
+/// Max line length for computing inline diff (skip for very long lines).
+const MAX_INLINE_DIFF_LEN: usize = 500;
+
+/// Compute word-level inline diff between two lines.
+/// Returns (old_spans, new_spans) or (None, None) if lines are too long.
+fn compute_inline_diff(old: &str, new: &str) -> (Option<Vec<InlineSpan>>, Option<Vec<InlineSpan>>) {
+    // Skip very long lines for performance
+    if old.len() > MAX_INLINE_DIFF_LEN || new.len() > MAX_INLINE_DIFF_LEN {
+        return (None, None);
+    }
+
+    // Skip if lines are identical (shouldn't happen for Replace, but defensive)
+    if old == new {
+        return (None, None);
+    }
+
+    let diff = TextDiff::from_words(old, new);
+
+    let mut old_spans = Vec::new();
+    let mut new_spans = Vec::new();
+    let mut old_pos = 0usize;
+    let mut new_pos = 0usize;
+
+    for change in diff.iter_all_changes() {
+        let value = change.value();
+        let len = value.len();
+
+        match change.tag() {
+            ChangeTag::Equal => {
+                // Unchanged content - exists in both
+                old_spans.push(InlineSpan {
+                    start: old_pos,
+                    end: old_pos + len,
+                    changed: false,
+                });
+                new_spans.push(InlineSpan {
+                    start: new_pos,
+                    end: new_pos + len,
+                    changed: false,
+                });
+                old_pos += len;
+                new_pos += len;
+            }
+            ChangeTag::Delete => {
+                // Only in old
+                old_spans.push(InlineSpan {
+                    start: old_pos,
+                    end: old_pos + len,
+                    changed: true,
+                });
+                old_pos += len;
+            }
+            ChangeTag::Insert => {
+                // Only in new
+                new_spans.push(InlineSpan {
+                    start: new_pos,
+                    end: new_pos + len,
+                    changed: true,
+                });
+                new_pos += len;
+            }
+        }
+    }
+
+    // Merge adjacent spans with same changed status for cleaner rendering
+    let old_spans = merge_adjacent_spans(old_spans);
+    let new_spans = merge_adjacent_spans(new_spans);
+
+    (Some(old_spans), Some(new_spans))
+}
+
+/// Merge adjacent spans with the same `changed` status.
+fn merge_adjacent_spans(spans: Vec<InlineSpan>) -> Vec<InlineSpan> {
+    if spans.is_empty() {
+        return spans;
+    }
+
+    let mut merged = Vec::with_capacity(spans.len());
+    let mut current = spans[0].clone();
+
+    for span in spans.into_iter().skip(1) {
+        if span.changed == current.changed && span.start == current.end {
+            // Extend current span
+            current.end = span.end;
+        } else {
+            merged.push(current);
+            current = span;
+        }
+    }
+    merged.push(current);
+    merged
 }
 
 /// Build hunks from rows with context.

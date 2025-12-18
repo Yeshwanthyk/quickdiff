@@ -52,6 +52,10 @@ mod palette {
     pub const DIFF_INSERT_BG: Color = Color::Rgb(25, 45, 32);   // Soft green tint
     pub const DIFF_EMPTY_BG: Color = Color::Rgb(22, 22, 26);    // Missing line placeholder
 
+    // Inline diff highlights (brighter, for word-level changes)
+    pub const INLINE_DELETE_BG: Color = Color::Rgb(90, 40, 50);  // Brighter red for changed words
+    pub const INLINE_INSERT_BG: Color = Color::Rgb(40, 90, 55);  // Brighter green for changed words
+
     // Status colors (slightly muted for polish)
     pub const SUCCESS: Color = Color::Rgb(85, 185, 105);
     pub const ERROR: Color = Color::Rgb(215, 85, 85);
@@ -382,59 +386,103 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     let mut lines: Vec<Line> = Vec::with_capacity(height);
 
     for row in diff.render_rows(app.scroll_y, height) {
-        let (line_num, content, bg_color) = if is_old {
+        // Extract line info based on pane side
+        let (line_ref, bg_color, inline_bg) = if is_old {
             match (&row.old, row.kind) {
                 (Some(line), ChangeKind::Equal) => {
-                    (Some(line.line_num + 1), line.content.as_str(), BG_DARK)
+                    (Some(line), BG_DARK, BG_DARK)
                 }
                 (Some(line), ChangeKind::Delete) | (Some(line), ChangeKind::Replace) => {
-                    (Some(line.line_num + 1), line.content.as_str(), DIFF_DELETE_BG)
+                    (Some(line), DIFF_DELETE_BG, INLINE_DELETE_BG)
                 }
-                (None, ChangeKind::Insert) => (None, "", DIFF_EMPTY_BG),
-                _ => (None, "", BG_DARK),
+                (None, ChangeKind::Insert) => (None, DIFF_EMPTY_BG, DIFF_EMPTY_BG),
+                _ => (None, BG_DARK, BG_DARK),
             }
         } else {
             match (&row.new, row.kind) {
                 (Some(line), ChangeKind::Equal) => {
-                    (Some(line.line_num + 1), line.content.as_str(), BG_DARK)
+                    (Some(line), BG_DARK, BG_DARK)
                 }
                 (Some(line), ChangeKind::Insert) | (Some(line), ChangeKind::Replace) => {
-                    (Some(line.line_num + 1), line.content.as_str(), DIFF_INSERT_BG)
+                    (Some(line), DIFF_INSERT_BG, INLINE_INSERT_BG)
                 }
-                (None, ChangeKind::Delete) => (None, "", DIFF_EMPTY_BG),
-                _ => (None, "", BG_DARK),
+                (None, ChangeKind::Delete) => (None, DIFF_EMPTY_BG, DIFF_EMPTY_BG),
+                _ => (None, BG_DARK, BG_DARK),
             }
         };
 
-        // Build syntax-highlighted content spans first (need length for alignment)
+        let line_num = line_ref.map(|l| l.line_num + 1);
+        let content = line_ref.map(|l| l.content.as_str()).unwrap_or("");
+        let inline_spans = line_ref.and_then(|l| l.inline_spans.as_ref());
+
+        // Build syntax-highlighted content spans with inline diff highlighting
         let mut code_spans: Vec<Span> = Vec::new();
         let mut visible_len = 0usize;
 
         if !content.is_empty() {
             let hl_spans = app.highlighter.highlight(app.current_lang, content);
-            let mut char_pos = 0usize;
             let scroll_x = app.scroll_x;
+            let mut char_pos = 0usize;
 
             for hl in hl_spans {
                 let span_text = content.get(hl.start..hl.end).unwrap_or("");
                 let span_char_count = span_text.chars().count();
-                let span_end_pos = char_pos + span_char_count;
+                let span_end_char = char_pos + span_char_count;
 
-                if span_end_pos <= scroll_x {
-                    char_pos = span_end_pos;
+                // Skip spans entirely before scroll offset
+                if span_end_char <= scroll_x {
+                    char_pos = span_end_char;
                     continue;
                 }
 
-                let skip = scroll_x.saturating_sub(char_pos);
-                let text: String = span_text.chars().skip(skip).map(sanitize_char).collect();
+                let fg = style_to_color(hl.style_id);
 
-                if !text.is_empty() {
-                    visible_len += text.chars().count();
-                    let fg = style_to_color(hl.style_id);
-                    code_spans.push(Span::styled(text, Style::default().fg(fg).bg(bg_color)));
+                // Check if this syntax span overlaps with any changed inline regions
+                let has_inline_changes = inline_spans.map_or(false, |spans| {
+                    spans.iter().any(|s| s.changed && s.start < hl.end && s.end > hl.start)
+                });
+
+                if !has_inline_changes {
+                    // Fast path: no inline changes, emit whole span
+                    let skip = scroll_x.saturating_sub(char_pos);
+                    let text: String = span_text.chars().skip(skip).map(sanitize_char).collect();
+                    if !text.is_empty() {
+                        visible_len += text.chars().count();
+                        code_spans.push(Span::styled(text, Style::default().fg(fg).bg(bg_color)));
+                    }
+                } else {
+                    // Slow path: split by inline regions
+                    let mut byte_offset = hl.start;
+                    let mut local_char = 0usize;
+
+                    for ch in span_text.chars() {
+                        let global_char = char_pos + local_char;
+                        
+                        // Skip chars before scroll
+                        if global_char < scroll_x {
+                            byte_offset += ch.len_utf8();
+                            local_char += 1;
+                            continue;
+                        }
+
+                        // Determine if this byte is in a changed region
+                        let is_changed = inline_spans.map_or(false, |spans| {
+                            spans.iter().any(|s| s.changed && byte_offset >= s.start && byte_offset < s.end)
+                        });
+                        let char_bg = if is_changed { inline_bg } else { bg_color };
+
+                        visible_len += 1;
+                        code_spans.push(Span::styled(
+                            sanitize_char(ch).to_string(),
+                            Style::default().fg(fg).bg(char_bg),
+                        ));
+
+                        byte_offset += ch.len_utf8();
+                        local_char += 1;
+                    }
                 }
 
-                char_pos = span_end_pos;
+                char_pos = span_end_char;
             }
         }
 
