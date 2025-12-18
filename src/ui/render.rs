@@ -448,11 +448,11 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         
         if is_old {
             // Right-aligned layout for old pane
-            // Calculate padding to push content right
-            let padding_len = content_width
-                .saturating_sub(visible_len)
-                .saturating_sub(RIGHT_MARGIN);
+            // Fixed gutter position: content area = content_width - RIGHT_MARGIN
+            let usable_width = content_width.saturating_sub(RIGHT_MARGIN);
+            let padding_len = usable_width.saturating_sub(visible_len);
             
+            // Padding (pushes content right)
             if padding_len > 0 {
                 spans.push(Span::styled(
                     " ".repeat(padding_len),
@@ -463,17 +463,15 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             // Code content
             spans.extend(code_spans);
             
-            // Right margin
-            if visible_len > 0 {
-                spans.push(Span::styled(
-                    " ".repeat(RIGHT_MARGIN),
-                    Style::default().bg(bg_color),
-                ));
-            }
-            
-            // Separator
+            // Fixed margin before gutter (always present)
             spans.push(Span::styled(
-                " │",
+                " ".repeat(RIGHT_MARGIN),
+                Style::default().bg(bg_color),
+            ));
+            
+            // Separator (fixed position)
+            spans.push(Span::styled(
+                "│",
                 Style::default().fg(GUTTER_SEP).bg(bg_color),
             ));
             
