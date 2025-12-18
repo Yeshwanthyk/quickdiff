@@ -26,35 +26,35 @@ mod palette {
     use ratatui::style::Color;
 
     // Base grays (dark to light) - refined for hierarchy
-    pub const BG_DARK: Color = Color::Rgb(18, 18, 22);       // Deep black
-    pub const BG_SURFACE: Color = Color::Rgb(26, 26, 32);    // Panels
-    pub const BG_ELEVATED: Color = Color::Rgb(36, 36, 44);   // Headers, overlays
-    pub const BG_SELECTED: Color = Color::Rgb(45, 45, 55);   // Selected items
+    pub const BG_DARK: Color = Color::Rgb(18, 18, 22); // Deep black
+    pub const BG_SURFACE: Color = Color::Rgb(26, 26, 32); // Panels
+    pub const BG_ELEVATED: Color = Color::Rgb(36, 36, 44); // Headers, overlays
+    pub const BG_SELECTED: Color = Color::Rgb(45, 45, 55); // Selected items
 
     // Borders & separators (very subtle)
-    pub const BORDER_DIM: Color = Color::Rgb(50, 50, 60);    // Unfocused borders
-    pub const GUTTER_SEP: Color = Color::Rgb(38, 38, 46);    // Nearly invisible gutter
-    pub const PANE_DIVIDER: Color = Color::Rgb(55, 55, 65);  // Between old/new panes
+    pub const BORDER_DIM: Color = Color::Rgb(50, 50, 60); // Unfocused borders
+    pub const GUTTER_SEP: Color = Color::Rgb(38, 38, 46); // Nearly invisible gutter
+    pub const PANE_DIVIDER: Color = Color::Rgb(55, 55, 65); // Between old/new panes
 
     // Text hierarchy (critical for glanceability)
-    pub const TEXT_FAINT: Color = Color::Rgb(55, 55, 65);    // Line numbers, minimal
-    pub const TEXT_MUTED: Color = Color::Rgb(80, 80, 92);    // Secondary info
-    pub const TEXT_DIM: Color = Color::Rgb(110, 110, 125);   // Tertiary
+    pub const TEXT_FAINT: Color = Color::Rgb(55, 55, 65); // Line numbers, minimal
+    pub const TEXT_MUTED: Color = Color::Rgb(80, 80, 92); // Secondary info
+    pub const TEXT_DIM: Color = Color::Rgb(110, 110, 125); // Tertiary
     pub const TEXT_NORMAL: Color = Color::Rgb(175, 175, 185); // Primary text
     pub const TEXT_BRIGHT: Color = Color::Rgb(230, 230, 235); // Emphasized
 
     // Accent (teal/cyan family)
-    pub const ACCENT: Color = Color::Rgb(80, 200, 200);      // Focus, interactive
-    pub const ACCENT_DIM: Color = Color::Rgb(55, 130, 130);  // Subtle accent
+    pub const ACCENT: Color = Color::Rgb(80, 200, 200); // Focus, interactive
+    pub const ACCENT_DIM: Color = Color::Rgb(55, 130, 130); // Subtle accent
 
     // Diff backgrounds (subtle tints, preserves syntax colors)
-    pub const DIFF_DELETE_BG: Color = Color::Rgb(45, 25, 30);   // Soft red tint
-    pub const DIFF_INSERT_BG: Color = Color::Rgb(25, 45, 32);   // Soft green tint
-    pub const DIFF_EMPTY_BG: Color = Color::Rgb(22, 22, 26);    // Missing line placeholder
+    pub const DIFF_DELETE_BG: Color = Color::Rgb(45, 25, 30); // Soft red tint
+    pub const DIFF_INSERT_BG: Color = Color::Rgb(25, 45, 32); // Soft green tint
+    pub const DIFF_EMPTY_BG: Color = Color::Rgb(22, 22, 26); // Missing line placeholder
 
     // Inline diff highlights (brighter, for word-level changes)
-    pub const INLINE_DELETE_BG: Color = Color::Rgb(90, 40, 50);  // Brighter red for changed words
-    pub const INLINE_INSERT_BG: Color = Color::Rgb(40, 90, 55);  // Brighter green for changed words
+    pub const INLINE_DELETE_BG: Color = Color::Rgb(90, 40, 50); // Brighter red for changed words
+    pub const INLINE_INSERT_BG: Color = Color::Rgb(40, 90, 55); // Brighter green for changed words
 
     // Status colors (slightly muted for polish)
     pub const SUCCESS: Color = Color::Rgb(85, 185, 105);
@@ -62,16 +62,16 @@ mod palette {
     pub const WARNING: Color = Color::Rgb(215, 175, 80);
 
     // Syntax highlighting (vibrant - these are the stars)
-    pub const SYN_KEYWORD: Color = Color::Rgb(198, 120, 221);   // Purple
-    pub const SYN_TYPE: Color = Color::Rgb(229, 192, 123);      // Gold
-    pub const SYN_FUNCTION: Color = Color::Rgb(97, 175, 239);   // Blue
-    pub const SYN_STRING: Color = Color::Rgb(152, 195, 121);    // Green
-    pub const SYN_NUMBER: Color = Color::Rgb(209, 154, 102);    // Orange
-    pub const SYN_COMMENT: Color = Color::Rgb(92, 99, 112);     // Gray (intentionally dim)
-    pub const SYN_OPERATOR: Color = Color::Rgb(171, 178, 191);  // Light gray
+    pub const SYN_KEYWORD: Color = Color::Rgb(198, 120, 221); // Purple
+    pub const SYN_TYPE: Color = Color::Rgb(229, 192, 123); // Gold
+    pub const SYN_FUNCTION: Color = Color::Rgb(97, 175, 239); // Blue
+    pub const SYN_STRING: Color = Color::Rgb(152, 195, 121); // Green
+    pub const SYN_NUMBER: Color = Color::Rgb(209, 154, 102); // Orange
+    pub const SYN_COMMENT: Color = Color::Rgb(92, 99, 112); // Gray (intentionally dim)
+    pub const SYN_OPERATOR: Color = Color::Rgb(171, 178, 191); // Light gray
     pub const SYN_PUNCTUATION: Color = Color::Rgb(120, 120, 135); // Subtle but visible
-    pub const SYN_CONSTANT: Color = Color::Rgb(86, 182, 194);   // Cyan
-    pub const SYN_PROPERTY: Color = Color::Rgb(224, 108, 117);  // Red
+    pub const SYN_CONSTANT: Color = Color::Rgb(86, 182, 194); // Cyan
+    pub const SYN_PROPERTY: Color = Color::Rgb(224, 108, 117); // Red
     pub const SYN_ATTRIBUTE: Color = Color::Rgb(229, 192, 123); // Gold
 
     // Sidebar indicators
@@ -162,7 +162,10 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     if let Some((kind, color)) = kind_indicator {
         spans.push(Span::styled(
             kind,
-            Style::default().fg(color).bg(BG_ELEVATED).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(color)
+                .bg(BG_ELEVATED)
+                .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled("  ", Style::default().bg(BG_ELEVATED)));
     }
@@ -170,7 +173,10 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Filename (prominent)
     spans.push(Span::styled(
         file_name,
-        Style::default().fg(TEXT_BRIGHT).bg(BG_ELEVATED).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(TEXT_BRIGHT)
+            .bg(BG_ELEVATED)
+            .add_modifier(Modifier::BOLD),
     ));
 
     if app.is_current_viewed() {
@@ -256,7 +262,7 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
             let text_color = if is_selected {
                 TEXT_BRIGHT
             } else if is_viewed {
-                TEXT_DIM  // Viewed files are dimmer
+                TEXT_DIM // Viewed files are dimmer
             } else {
                 TEXT_NORMAL
             };
@@ -264,11 +270,18 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
             let line = Line::from(vec![
                 Span::styled(
                     select_indicator,
-                    Style::default().fg(if is_selected { INDICATOR_SELECTED } else { BG_SURFACE }),
+                    Style::default().fg(if is_selected {
+                        INDICATOR_SELECTED
+                    } else {
+                        BG_SURFACE
+                    }),
                 ),
                 Span::styled(format!("{}", kind_char), Style::default().fg(kind_color)),
                 Span::styled(" ", Style::default()),
-                Span::styled(format!("{}", viewed_char), Style::default().fg(viewed_color)),
+                Span::styled(
+                    format!("{}", viewed_char),
+                    Style::default().fg(viewed_color),
+                ),
                 Span::styled(" ", Style::default()),
                 Span::styled(display_path, Style::default().fg(text_color)),
             ]);
@@ -334,15 +347,13 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let Some(diff) = &app.diff else {
-        let msg = Paragraph::new("No diff to display")
-            .style(Style::default().fg(TEXT_MUTED));
+        let msg = Paragraph::new("No diff to display").style(Style::default().fg(TEXT_MUTED));
         frame.render_widget(msg, inner);
         return;
     };
 
     if diff.rows.is_empty() {
-        let msg = Paragraph::new("Files are identical")
-            .style(Style::default().fg(TEXT_MUTED));
+        let msg = Paragraph::new("Files are identical").style(Style::default().fg(TEXT_MUTED));
         frame.render_widget(msg, inner);
         return;
     }
@@ -352,13 +363,13 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(50),
-            Constraint::Length(1),      // Divider
+            Constraint::Length(1), // Divider
             Constraint::Percentage(50),
         ])
         .split(inner);
 
-    render_diff_pane(frame, app, panes[0], true);  // Old
-    render_pane_divider(frame, panes[1]);          // Divider
+    render_diff_pane(frame, app, panes[0], true); // Old
+    render_pane_divider(frame, panes[1]); // Divider
     render_diff_pane(frame, app, panes[2], false); // New
 }
 
@@ -371,10 +382,8 @@ fn render_pane_divider(frame: &mut Frame, area: Rect) {
     frame.render_widget(para, area);
 }
 
-/// Gutter width: 4 (line num) + 3 (separator " │ ") = 7
-const GUTTER_WIDTH: usize = 7;
-/// Margin from edge for right-aligned content
-const RIGHT_MARGIN: usize = 2;
+/// Gutter width: 4 (line num) + 2 (separator "│ ") = 6
+const GUTTER_WIDTH: usize = 6;
 
 fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     let Some(diff) = &app.diff else {
@@ -382,16 +391,14 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     };
 
     let height = area.height as usize;
-    let content_width = (area.width as usize).saturating_sub(GUTTER_WIDTH);
+    let max_content = (area.width as usize).saturating_sub(GUTTER_WIDTH);
     let mut lines: Vec<Line> = Vec::with_capacity(height);
 
     for row in diff.render_rows(app.scroll_y, height) {
         // Extract line info based on pane side
         let (line_ref, bg_color, inline_bg) = if is_old {
             match (&row.old, row.kind) {
-                (Some(line), ChangeKind::Equal) => {
-                    (Some(line), BG_DARK, BG_DARK)
-                }
+                (Some(line), ChangeKind::Equal) => (Some(line), BG_DARK, BG_DARK),
                 (Some(line), ChangeKind::Delete) | (Some(line), ChangeKind::Replace) => {
                     (Some(line), DIFF_DELETE_BG, INLINE_DELETE_BG)
                 }
@@ -400,9 +407,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             }
         } else {
             match (&row.new, row.kind) {
-                (Some(line), ChangeKind::Equal) => {
-                    (Some(line), BG_DARK, BG_DARK)
-                }
+                (Some(line), ChangeKind::Equal) => (Some(line), BG_DARK, BG_DARK),
                 (Some(line), ChangeKind::Insert) | (Some(line), ChangeKind::Replace) => {
                     (Some(line), DIFF_INSERT_BG, INLINE_INSERT_BG)
                 }
@@ -415,16 +420,16 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         let content = line_ref.map(|l| l.content.as_str()).unwrap_or("");
         let inline_spans = line_ref.and_then(|l| l.inline_spans.as_ref());
 
-        // Build syntax-highlighted content spans with inline diff highlighting
+        // Build syntax-highlighted content spans, truncated to max_content
         let mut code_spans: Vec<Span> = Vec::new();
         let mut visible_len = 0usize;
 
-        if !content.is_empty() {
+        if !content.is_empty() && max_content > 0 {
             let hl_spans = app.highlighter.highlight(app.current_lang, content);
             let scroll_x = app.scroll_x;
             let mut char_pos = 0usize;
 
-            for hl in hl_spans {
+            'outer: for hl in hl_spans {
                 let span_text = content.get(hl.start..hl.end).unwrap_or("");
                 let span_char_count = span_text.chars().count();
                 let span_end_char = char_pos + span_char_count;
@@ -438,26 +443,37 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                 let fg = style_to_color(hl.style_id);
 
                 // Check if this syntax span overlaps with any changed inline regions
-                let has_inline_changes = inline_spans.map_or(false, |spans| {
-                    spans.iter().any(|s| s.changed && s.start < hl.end && s.end > hl.start)
+                let has_inline_changes = inline_spans.is_some_and(|spans| {
+                    spans
+                        .iter()
+                        .any(|s| s.changed && s.start < hl.end && s.end > hl.start)
                 });
 
                 if !has_inline_changes {
-                    // Fast path: no inline changes, emit whole span
+                    // Fast path: no inline changes, emit whole span (truncated)
                     let skip = scroll_x.saturating_sub(char_pos);
-                    let text: String = span_text.chars().skip(skip).map(sanitize_char).collect();
+                    let remaining = max_content.saturating_sub(visible_len);
+                    let text: String = span_text
+                        .chars()
+                        .skip(skip)
+                        .take(remaining)
+                        .map(sanitize_char)
+                        .collect();
                     if !text.is_empty() {
                         visible_len += text.chars().count();
                         code_spans.push(Span::styled(text, Style::default().fg(fg).bg(bg_color)));
                     }
+                    if visible_len >= max_content {
+                        break 'outer;
+                    }
                 } else {
-                    // Slow path: split by inline regions
+                    // Slow path: split by inline regions for word-level highlighting
                     let mut byte_offset = hl.start;
                     let mut local_char = 0usize;
 
                     for ch in span_text.chars() {
                         let global_char = char_pos + local_char;
-                        
+
                         // Skip chars before scroll
                         if global_char < scroll_x {
                             byte_offset += ch.len_utf8();
@@ -465,9 +481,16 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                             continue;
                         }
 
+                        // Stop if we've hit width limit
+                        if visible_len >= max_content {
+                            break 'outer;
+                        }
+
                         // Determine if this byte is in a changed region
-                        let is_changed = inline_spans.map_or(false, |spans| {
-                            spans.iter().any(|s| s.changed && byte_offset >= s.start && byte_offset < s.end)
+                        let is_changed = inline_spans.is_some_and(|spans| {
+                            spans
+                                .iter()
+                                .any(|s| s.changed && byte_offset >= s.start && byte_offset < s.end)
                         });
                         let char_bg = if is_changed { inline_bg } else { bg_color };
 
@@ -486,69 +509,35 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             }
         }
 
-        // Start building the line
+        // Build line: [line_num (4)][│ (2)][content][padding]
+        // Same layout for both panes - simple and predictable
         let mut spans: Vec<Span> = Vec::new();
 
-        // For OLD (left) pane: right-align content
-        // Layout: [padding][code][margin] │ [line_num]
-        // For NEW (right) pane: left-align content  
-        // Layout: [line_num] │ [code]
-        
-        if is_old {
-            // Right-aligned layout for old pane
-            // Fixed gutter position: content area = content_width - RIGHT_MARGIN
-            let usable_width = content_width.saturating_sub(RIGHT_MARGIN);
-            let padding_len = usable_width.saturating_sub(visible_len);
-            
-            // Padding (pushes content right)
-            if padding_len > 0 {
-                spans.push(Span::styled(
-                    " ".repeat(padding_len),
-                    Style::default().bg(bg_color),
-                ));
-            }
-            
-            // Code content
-            spans.extend(code_spans);
-            
-            // Fixed margin before gutter (always present)
+        // Line number (4 chars, right-aligned)
+        let line_num_str = line_num
+            .map(|n| format!("{:>4}", n))
+            .unwrap_or_else(|| "    ".to_string());
+        spans.push(Span::styled(
+            line_num_str,
+            Style::default().fg(TEXT_FAINT).bg(bg_color),
+        ));
+
+        // Separator (2 chars)
+        spans.push(Span::styled(
+            "│ ",
+            Style::default().fg(GUTTER_SEP).bg(bg_color),
+        ));
+
+        // Code content
+        spans.extend(code_spans);
+
+        // Trailing padding to fill line with background color
+        let trailing_pad = max_content.saturating_sub(visible_len);
+        if trailing_pad > 0 {
             spans.push(Span::styled(
-                " ".repeat(RIGHT_MARGIN),
+                " ".repeat(trailing_pad),
                 Style::default().bg(bg_color),
             ));
-            
-            // Separator (fixed position)
-            spans.push(Span::styled(
-                "│",
-                Style::default().fg(GUTTER_SEP).bg(bg_color),
-            ));
-            
-            // Line number (right side for old pane)
-            let line_num_str = line_num
-                .map(|n| format!("{:>4}", n))
-                .unwrap_or_else(|| "    ".to_string());
-            spans.push(Span::styled(
-                line_num_str,
-                Style::default().fg(TEXT_FAINT).bg(bg_color),
-            ));
-        } else {
-            // Left-aligned layout for new pane (standard)
-            let line_num_str = line_num
-                .map(|n| format!("{:>4}", n))
-                .unwrap_or_else(|| "    ".to_string());
-            spans.push(Span::styled(
-                line_num_str,
-                Style::default().fg(TEXT_FAINT).bg(bg_color),
-            ));
-            
-            // Separator
-            spans.push(Span::styled(
-                "│ ",
-                Style::default().fg(GUTTER_SEP).bg(bg_color),
-            ));
-            
-            // Code content
-            spans.extend(code_spans);
         }
 
         lines.push(Line::from(spans));
@@ -624,7 +613,10 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     if app.mode == Mode::AddComment {
         let line = Line::from(vec![
             Span::styled(" Comment: ", Style::default().fg(ACCENT).bg(BG_ELEVATED)),
-            Span::styled(&app.draft_comment, Style::default().fg(TEXT_BRIGHT).bg(BG_ELEVATED)),
+            Span::styled(
+                &app.draft_comment,
+                Style::default().fg(TEXT_BRIGHT).bg(BG_ELEVATED),
+            ),
             Span::styled("█", Style::default().fg(ACCENT).bg(BG_ELEVATED)),
             Span::styled(
                 "  Enter: save  Esc: cancel",

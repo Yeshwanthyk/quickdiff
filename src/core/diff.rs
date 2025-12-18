@@ -251,8 +251,14 @@ fn pair_changes(changes: &[Change]) -> Vec<RenderRow> {
                     // Compute inline spans for Replace rows (both old and new exist)
                     let (old_spans, new_spans) = match (delete_change, insert_change) {
                         (
-                            Some(Change::Delete { content: old_content, .. }),
-                            Some(Change::Insert { content: new_content, .. }),
+                            Some(Change::Delete {
+                                content: old_content,
+                                ..
+                            }),
+                            Some(Change::Insert {
+                                content: new_content,
+                                ..
+                            }),
                         ) => compute_inline_diff(old_content, new_content),
                         _ => (None, None),
                     };
