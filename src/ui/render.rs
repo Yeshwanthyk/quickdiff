@@ -49,6 +49,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     render_top_bar(frame, app, chunks[0]);
     render_main(frame, app, chunks[1]);
     render_bottom_bar(frame, app, chunks[2]);
+
+    // Render overlay if in ViewComments mode
+    if app.mode == Mode::ViewComments {
+        render_comments_overlay(frame, app);
+    }
 }
 
 /// Render the top bar.
@@ -279,6 +284,46 @@ fn sanitize_char(c: char) -> char {
     }
 }
 
+/// Render comments overlay.
+fn render_comments_overlay(frame: &mut Frame, app: &App) {
+    use ratatui::widgets::Clear;
+
+    let area = frame.area();
+
+    // Calculate centered overlay size
+    let width = (area.width * 3 / 4).clamp(30, 60);
+    let height = (app.viewing_comments.len() as u16 + 4).clamp(5, area.height.saturating_sub(4));
+
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+
+    let overlay_area = Rect::new(x, y, width, height);
+
+    // Clear background
+    frame.render_widget(Clear, overlay_area);
+
+    // Build comment lines
+    let mut lines: Vec<Line> = Vec::new();
+    for (id, msg) in &app.viewing_comments {
+        lines.push(Line::from(vec![
+            Span::styled(format!("[{}] ", id), Style::default().fg(Color::Yellow)),
+            Span::raw(msg.as_str()),
+        ]));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from("No comments"));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Comments (Esc to close) ");
+
+    let para = Paragraph::new(lines).block(block);
+    frame.render_widget(para, overlay_area);
+}
+
 /// Render the bottom bar with key hints or error message.
 fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     // AddComment mode: show input prompt
@@ -311,7 +356,7 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     let hints = match app.focus {
         Focus::Sidebar => "j/k: navigate  Enter: open  Space: viewed  Tab: switch  q: quit",
         Focus::Diff => {
-            "j/k: scroll  h/l: horizontal  {/}: hunks  c: comment  Space: viewed  Tab: switch  q: quit"
+            "j/k: scroll  {/}: hunks  c: add  C: view  Space: viewed  Tab: switch  q: quit"
         }
     };
 

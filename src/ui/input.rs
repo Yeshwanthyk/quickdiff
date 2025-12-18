@@ -15,9 +15,11 @@ pub fn handle_input(app: &mut App, event: Event) -> bool {
 
 /// Handle a key event.
 fn handle_key(app: &mut App, key: KeyEvent) -> bool {
-    // Handle input mode first
-    if app.mode == Mode::AddComment {
-        return handle_add_comment_key(app, key);
+    // Handle input modes first
+    match app.mode {
+        Mode::AddComment => return handle_add_comment_key(app, key),
+        Mode::ViewComments => return handle_view_comments_key(app, key),
+        Mode::Normal => {}
     }
 
     // Global keys (only in Normal mode)
@@ -126,6 +128,10 @@ fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
             app.start_add_comment();
             true
         }
+        KeyCode::Char('C') => {
+            app.show_comments();
+            true
+        }
         _ => false,
     }
 }
@@ -152,5 +158,16 @@ fn handle_add_comment_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+/// Handle keys when viewing comments overlay.
+fn handle_view_comments_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('C') => {
+            app.close_comments();
+            true
+        }
+        _ => true, // consume all keys in overlay
     }
 }

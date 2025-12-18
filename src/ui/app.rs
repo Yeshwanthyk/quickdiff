@@ -21,6 +21,7 @@ pub enum Mode {
     #[default]
     Normal,
     AddComment,
+    ViewComments,
 }
 
 /// Application state.
@@ -61,6 +62,8 @@ pub struct App {
     pub mode: Mode,
     /// Draft comment text (when in AddComment mode).
     pub draft_comment: String,
+    /// Comments to display in ViewComments mode.
+    pub viewing_comments: Vec<(u64, String)>,
     /// Last error message to display.
     pub error_msg: Option<String>,
     /// Status message to display (non-error).
@@ -100,6 +103,7 @@ impl App {
             scroll_x: 0,
             mode: Mode::default(),
             draft_comment: String::new(),
+            viewing_comments: Vec::new(),
             error_msg: None,
             status_msg: None,
             dirty: true,
@@ -433,6 +437,43 @@ impl App {
 
         self.mode = Mode::Normal;
         self.draft_comment.clear();
+        self.dirty = true;
+    }
+
+    /// Show comments overlay for current hunk.
+    pub fn show_comments(&mut self) {
+        use crate::core::{CommentStore, FileCommentStore};
+
+        let Some(file) = self.selected_file() else {
+            return;
+        };
+        let path = file.path.clone();
+
+        let store = match FileCommentStore::open(&self.repo) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        // Get all open comments for this file
+        let comments = store.list_for_path(&path, false);
+
+        if comments.is_empty() {
+            self.status_msg = Some("No comments on this file".to_string());
+            self.dirty = true;
+            return;
+        }
+
+        // Collect id + message pairs
+        self.viewing_comments = comments.iter().map(|c| (c.id, c.message.clone())).collect();
+
+        self.mode = Mode::ViewComments;
+        self.dirty = true;
+    }
+
+    /// Close comments overlay.
+    pub fn close_comments(&mut self) {
+        self.mode = Mode::Normal;
+        self.viewing_comments.clear();
         self.dirty = true;
     }
 }
