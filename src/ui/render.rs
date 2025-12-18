@@ -367,12 +367,18 @@ fn render_pane_divider(frame: &mut Frame, area: Rect) {
     frame.render_widget(para, area);
 }
 
+/// Gutter width: 4 (line num) + 3 (separator " │ ") = 7
+const GUTTER_WIDTH: usize = 7;
+/// Margin from edge for right-aligned content
+const RIGHT_MARGIN: usize = 2;
+
 fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     let Some(diff) = &app.diff else {
         return;
     };
 
     let height = area.height as usize;
+    let content_width = (area.width as usize).saturating_sub(GUTTER_WIDTH);
     let mut lines: Vec<Line> = Vec::with_capacity(height);
 
     for row in diff.render_rows(app.scroll_y, height) {
@@ -400,27 +406,11 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             }
         };
 
-        // Line number gutter (very dim - reference only, not primary)
-        let line_num_str = line_num
-            .map(|n| format!("{:>4}", n))
-            .unwrap_or_else(|| "    ".to_string());
+        // Build syntax-highlighted content spans first (need length for alignment)
+        let mut code_spans: Vec<Span> = Vec::new();
+        let mut visible_len = 0usize;
 
-        let mut spans = vec![Span::styled(
-            line_num_str,
-            Style::default().fg(TEXT_FAINT).bg(bg_color),
-        )];
-
-        // Separator (nearly invisible)
-        spans.push(Span::styled(
-            " │ ",
-            Style::default().fg(GUTTER_SEP).bg(bg_color),
-        ));
-
-        if content.is_empty() {
-            // Fill empty line with background
-            spans.push(Span::styled("", Style::default().bg(bg_color)));
-        } else {
-            // Syntax-highlighted content
+        if !content.is_empty() {
             let hl_spans = app.highlighter.highlight(app.current_lang, content);
             let mut char_pos = 0usize;
             let scroll_x = app.scroll_x;
@@ -439,12 +429,80 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                 let text: String = span_text.chars().skip(skip).map(sanitize_char).collect();
 
                 if !text.is_empty() {
+                    visible_len += text.chars().count();
                     let fg = style_to_color(hl.style_id);
-                    spans.push(Span::styled(text, Style::default().fg(fg).bg(bg_color)));
+                    code_spans.push(Span::styled(text, Style::default().fg(fg).bg(bg_color)));
                 }
 
                 char_pos = span_end_pos;
             }
+        }
+
+        // Start building the line
+        let mut spans: Vec<Span> = Vec::new();
+
+        // For OLD (left) pane: right-align content
+        // Layout: [padding][code][margin] │ [line_num]
+        // For NEW (right) pane: left-align content  
+        // Layout: [line_num] │ [code]
+        
+        if is_old {
+            // Right-aligned layout for old pane
+            // Calculate padding to push content right
+            let padding_len = content_width
+                .saturating_sub(visible_len)
+                .saturating_sub(RIGHT_MARGIN);
+            
+            if padding_len > 0 {
+                spans.push(Span::styled(
+                    " ".repeat(padding_len),
+                    Style::default().bg(bg_color),
+                ));
+            }
+            
+            // Code content
+            spans.extend(code_spans);
+            
+            // Right margin
+            if visible_len > 0 {
+                spans.push(Span::styled(
+                    " ".repeat(RIGHT_MARGIN),
+                    Style::default().bg(bg_color),
+                ));
+            }
+            
+            // Separator
+            spans.push(Span::styled(
+                " │",
+                Style::default().fg(GUTTER_SEP).bg(bg_color),
+            ));
+            
+            // Line number (right side for old pane)
+            let line_num_str = line_num
+                .map(|n| format!("{:>4}", n))
+                .unwrap_or_else(|| "    ".to_string());
+            spans.push(Span::styled(
+                line_num_str,
+                Style::default().fg(TEXT_FAINT).bg(bg_color),
+            ));
+        } else {
+            // Left-aligned layout for new pane (standard)
+            let line_num_str = line_num
+                .map(|n| format!("{:>4}", n))
+                .unwrap_or_else(|| "    ".to_string());
+            spans.push(Span::styled(
+                line_num_str,
+                Style::default().fg(TEXT_FAINT).bg(bg_color),
+            ));
+            
+            // Separator
+            spans.push(Span::styled(
+                "│ ",
+                Style::default().fg(GUTTER_SEP).bg(bg_color),
+            ));
+            
+            // Code content
+            spans.extend(code_spans);
         }
 
         lines.push(Line::from(spans));
