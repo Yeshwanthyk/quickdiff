@@ -196,7 +196,12 @@ fn compute_diff(old: &TextBuffer, new: &TextBuffer, context: usize) -> DiffResul
     DiffResult { rows, hunks }
 }
 
-/// Pair consecutive delete+insert sequences into Replace rows.
+/// Convert changes to render rows.
+///
+/// Pairing strategy:
+/// - Consecutive deletes and inserts are paired positionally (1st delete with 1st insert, etc.)
+/// - Paired lines get word-level inline diff highlighting
+/// - Unpaired lines (more deletes than inserts or vice versa) show as pure Delete/Insert
 fn pair_changes(changes: &[Change]) -> Vec<RenderRow> {
     let mut rows = Vec::new();
     let mut i = 0;
@@ -242,58 +247,57 @@ fn pair_changes(changes: &[Change]) -> Vec<RenderRow> {
                     }
                 }
 
-                // Pair deletes with inserts
+                // Pair deletes with inserts positionally (side-by-side display)
                 let max_len = deletes.len().max(inserts.len());
                 for j in 0..max_len {
-                    let delete_change = deletes.get(j);
-                    let insert_change = inserts.get(j);
+                    let del = deletes.get(j);
+                    let ins = inserts.get(j);
 
-                    // Compute inline spans for Replace rows (both old and new exist)
-                    let (old_spans, new_spans) = match (delete_change, insert_change) {
-                        (
-                            Some(Change::Delete {
-                                content: old_content,
-                                ..
-                            }),
-                            Some(Change::Insert {
-                                content: new_content,
-                                ..
-                            }),
-                        ) => compute_inline_diff(old_content, new_content),
-                        _ => (None, None),
-                    };
-
-                    let old = delete_change.map(|c| {
-                        if let Change::Delete { old_line, content } = c {
-                            LineRef {
-                                line_num: *old_line,
-                                content: content.clone(),
-                                inline_spans: old_spans.clone(),
-                            }
-                        } else {
-                            unreachable!()
+                    match (del, ins) {
+                        (Some(Change::Delete { old_line, content: old_content }),
+                         Some(Change::Insert { new_line, content: new_content })) => {
+                            // Both sides present - Replace with inline diff
+                            let (old_spans, new_spans) = compute_inline_diff(old_content, new_content);
+                            rows.push(RenderRow {
+                                old: Some(LineRef {
+                                    line_num: *old_line,
+                                    content: old_content.clone(),
+                                    inline_spans: old_spans,
+                                }),
+                                new: Some(LineRef {
+                                    line_num: *new_line,
+                                    content: new_content.clone(),
+                                    inline_spans: new_spans,
+                                }),
+                                kind: ChangeKind::Replace,
+                            });
                         }
-                    });
-                    let new = insert_change.map(|c| {
-                        if let Change::Insert { new_line, content } = c {
-                            LineRef {
-                                line_num: *new_line,
-                                content: content.clone(),
-                                inline_spans: new_spans.clone(),
-                            }
-                        } else {
-                            unreachable!()
+                        (Some(Change::Delete { old_line, content }), None) => {
+                            // Only delete - no corresponding insert
+                            rows.push(RenderRow {
+                                old: Some(LineRef {
+                                    line_num: *old_line,
+                                    content: content.clone(),
+                                    inline_spans: None,
+                                }),
+                                new: None,
+                                kind: ChangeKind::Delete,
+                            });
                         }
-                    });
-
-                    let kind = match (&old, &new) {
-                        (Some(_), Some(_)) => ChangeKind::Replace,
-                        (Some(_), None) => ChangeKind::Delete,
-                        (None, Some(_)) => ChangeKind::Insert,
-                        (None, None) => unreachable!(),
-                    };
-
-                    rows.push(RenderRow { old, new, kind });
+                        (None, Some(Change::Insert { new_line, content })) => {
+                            // Only insert - no corresponding delete
+                            rows.push(RenderRow {
+                                old: None,
+                                new: Some(LineRef {
+                                    line_num: *new_line,
+                                    content: content.clone(),
+                                    inline_spans: None,
+                                }),
+                                kind: ChangeKind::Insert,
+                            });
+                        }
+                        _ => unreachable!(),
+                    }
                 }
             }
         }
