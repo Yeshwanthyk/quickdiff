@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use clap::Parser;
 use crossterm::{
     event, execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -13,8 +14,33 @@ use crossterm::{
 use ratatui::prelude::*;
 
 use quickdiff::cli::run_comments_command;
-use quickdiff::core::RepoRoot;
+use quickdiff::core::{DiffSource, RepoRoot};
 use quickdiff::ui::{handle_input, render, App};
+
+/// A git-first terminal diff viewer.
+#[derive(Parser, Debug)]
+#[command(name = "quickdiff", version, about)]
+struct Cli {
+    /// Show changes from a specific commit
+    #[arg(short = 'c', long = "commit")]
+    commit: Option<String>,
+
+    /// Compare against a base branch (e.g., origin/main)
+    #[arg(short = 'b', long = "base")]
+    base: Option<String>,
+
+    /// Revision or range (e.g., HEAD~3, abc123..def456, origin/main)
+    #[arg(value_name = "REV")]
+    revision: Option<String>,
+
+    /// Filter to specific file(s)
+    #[arg(short = 'f', long = "file", value_name = "PATH")]
+    file: Option<String>,
+
+    /// Comments subcommand
+    #[arg(trailing_var_arg = true, hide = true)]
+    rest: Vec<String>,
+}
 
 /// RAII guard for terminal state. Restores terminal on drop (including panic).
 struct TerminalGuard;
@@ -36,22 +62,63 @@ impl Drop for TerminalGuard {
 }
 
 fn main() -> ExitCode {
-    // Parse args for CLI dispatch
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    // Check for CLI subcommands
-    if args.first().map(|s| s.as_str()) == Some("comments") {
-        return run_cli_comments(&args[1..]);
+    // Check for comments subcommand first (before clap parsing)
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some("comments") {
+        return run_cli_comments(&args[2..].iter().map(|s| s.clone()).collect::<Vec<_>>());
     }
 
+    // Parse CLI args
+    let cli = Cli::parse();
+
+    // Determine diff source
+    let source = parse_diff_source(&cli);
+
     // Run TUI
-    match run_tui() {
+    match run_tui(source, cli.file) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("Error: {}", e);
             ExitCode::from(1)
         }
     }
+}
+
+/// Parse CLI arguments into a DiffSource.
+fn parse_diff_source(cli: &Cli) -> DiffSource {
+    // Explicit flags take precedence
+    if let Some(ref commit) = cli.commit {
+        return DiffSource::Commit(commit.clone());
+    }
+    if let Some(ref base) = cli.base {
+        return DiffSource::Base(base.clone());
+    }
+
+    // Check positional argument
+    if let Some(ref rev) = cli.revision {
+        // Check for range syntax (contains ..)
+        if let Some(idx) = rev.find("..") {
+            let from = &rev[..idx];
+            let to = &rev[idx + 2..];
+            // Handle ... (three dots) as well
+            let to = to.strip_prefix('.').unwrap_or(to);
+            return DiffSource::Range {
+                from: if from.is_empty() { "HEAD".to_string() } else { from.to_string() },
+                to: if to.is_empty() { "HEAD".to_string() } else { to.to_string() },
+            };
+        }
+
+        // Check if it looks like a remote branch
+        if rev.contains('/') && !rev.contains(':') {
+            return DiffSource::Base(rev.clone());
+        }
+
+        // Default: treat as a commit
+        return DiffSource::Commit(rev.clone());
+    }
+
+    // Default: working tree changes
+    DiffSource::WorkingTree
 }
 
 /// Run CLI comments command.
@@ -80,7 +147,7 @@ fn run_cli_comments(args: &[String]) -> ExitCode {
 }
 
 /// Run the TUI application.
-fn run_tui() -> Result<()> {
+fn run_tui(source: DiffSource, file_filter: Option<String>) -> Result<()> {
     // Set panic hook to ensure terminal cleanup
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
@@ -105,8 +172,8 @@ fn run_tui() -> Result<()> {
         }
     };
 
-    // Create app
-    let mut app = App::new(repo)?;
+    // Create app with diff source and file filter
+    let mut app = App::new(repo, source, file_filter)?;
 
     // Check for empty changeset
     if app.files.is_empty() {
