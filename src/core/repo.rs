@@ -16,6 +16,27 @@ pub enum RepoError {
     Io(#[from] std::io::Error),
     #[error("invalid utf-8 in git output")]
     InvalidUtf8,
+    #[error("invalid revision: {0}")]
+    InvalidRevision(String),
+}
+
+/// Source specification for diff comparison.
+#[derive(Debug, Clone)]
+pub enum DiffSource {
+    /// Working tree changes vs HEAD (default behavior).
+    WorkingTree,
+    /// Single commit (show changes introduced by that commit).
+    Commit(String),
+    /// Range of commits (from..to).
+    Range { from: String, to: String },
+    /// Compare against a base ref (e.g., origin/main).
+    Base(String),
+}
+
+impl Default for DiffSource {
+    fn default() -> Self {
+        Self::WorkingTree
+    }
 }
 
 /// Canonicalized path to a git repository root.
@@ -237,6 +258,213 @@ pub fn load_working_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, 
         Ok(content) => Ok(content),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(e.into()),
+    }
+}
+
+/// Load content from a specific git revision.
+pub fn load_revision_content(
+    root: &RepoRoot,
+    revision: &str,
+    path: &RelPath,
+) -> Result<Vec<u8>, RepoError> {
+    let output = Command::new("git")
+        .args(["show", &format!("{}:{}", revision, path.as_str())])
+        .current_dir(root.path())
+        .output()?;
+
+    if !output.status.success() {
+        // File might not exist in this revision
+        return Ok(Vec::new());
+    }
+
+    Ok(output.stdout)
+}
+
+/// Resolve a revision to its full SHA.
+pub fn resolve_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", revision])
+        .current_dir(root.path())
+        .output()?;
+
+    if !output.status.success() {
+        return Err(RepoError::InvalidRevision(revision.to_string()));
+    }
+
+    let sha = std::str::from_utf8(&output.stdout)
+        .map_err(|_| RepoError::InvalidUtf8)?
+        .trim()
+        .to_string();
+
+    Ok(sha)
+}
+
+/// Get the parent commit of a revision.
+pub fn get_parent_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", &format!("{}^", revision)])
+        .current_dir(root.path())
+        .output()?;
+
+    if !output.status.success() {
+        // No parent (initial commit) - return empty tree
+        return Ok("4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string()); // git empty tree
+    }
+
+    let sha = std::str::from_utf8(&output.stdout)
+        .map_err(|_| RepoError::InvalidUtf8)?
+        .trim()
+        .to_string();
+
+    Ok(sha)
+}
+
+/// List changed files between two revisions.
+pub fn list_changed_files_between(
+    root: &RepoRoot,
+    from: &str,
+    to: &str,
+) -> Result<Vec<ChangedFile>, RepoError> {
+    let output = Command::new("git")
+        .args([
+            "diff",
+            "--name-status",
+            "-z",
+            "--find-renames",
+            "--find-copies",
+            from,
+            to,
+        ])
+        .current_dir(root.path())
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(RepoError::GitError(stderr.to_string()));
+    }
+
+    parse_diff_name_status(&output.stdout)
+}
+
+/// List changed files in a single commit.
+pub fn list_commit_files(root: &RepoRoot, commit: &str) -> Result<Vec<ChangedFile>, RepoError> {
+    let parent = get_parent_revision(root, commit)?;
+    list_changed_files_between(root, &parent, commit)
+}
+
+/// List changed files between a base ref and HEAD (including working tree).
+pub fn list_changed_files_from_base(
+    root: &RepoRoot,
+    base: &str,
+) -> Result<Vec<ChangedFile>, RepoError> {
+    // Get merge-base to find common ancestor
+    let output = Command::new("git")
+        .args(["merge-base", base, "HEAD"])
+        .current_dir(root.path())
+        .output()?;
+
+    let merge_base = if output.status.success() {
+        std::str::from_utf8(&output.stdout)
+            .map_err(|_| RepoError::InvalidUtf8)?
+            .trim()
+            .to_string()
+    } else {
+        // Fall back to using the base ref directly
+        resolve_revision(root, base)?
+    };
+
+    // Get files changed between merge-base and HEAD
+    let committed = list_changed_files_between(root, &merge_base, "HEAD")?;
+
+    // Also get working tree changes
+    let working = list_changed_files(root)?;
+
+    // Merge: working tree changes take precedence
+    let mut files: std::collections::HashMap<String, ChangedFile> = committed
+        .into_iter()
+        .map(|f| (f.path.as_str().to_string(), f))
+        .collect();
+
+    for f in working {
+        files.insert(f.path.as_str().to_string(), f);
+    }
+
+    let mut result: Vec<_> = files.into_values().collect();
+    result.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(result)
+}
+
+/// Parse `git diff --name-status -z` output.
+fn parse_diff_name_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> {
+    let text = std::str::from_utf8(output).map_err(|_| RepoError::InvalidUtf8)?;
+    let mut files = Vec::new();
+    let mut parts = text.split('\0').peekable();
+
+    while let Some(status) = parts.next() {
+        if status.is_empty() {
+            continue;
+        }
+
+        let status_char = status.chars().next().unwrap_or('M');
+        let path = parts.next().unwrap_or("");
+
+        if path.is_empty() {
+            continue;
+        }
+
+        let kind = match status_char {
+            'A' => FileChangeKind::Added,
+            'D' => FileChangeKind::Deleted,
+            'M' => FileChangeKind::Modified,
+            'R' | 'C' => {
+                // Rename/Copy: next part is the new path
+                if let Some(new_path) = parts.next() {
+                    files.push(ChangedFile::renamed(
+                        RelPath::new(path),
+                        RelPath::new(new_path),
+                    ));
+                    continue;
+                }
+                FileChangeKind::Modified
+            }
+            _ => FileChangeKind::Modified,
+        };
+
+        files.push(ChangedFile::new(RelPath::new(path), kind));
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// Get a display name for a DiffSource.
+pub fn diff_source_display(source: &DiffSource, root: &RepoRoot) -> String {
+    match source {
+        DiffSource::WorkingTree => "Working Tree".to_string(),
+        DiffSource::Commit(c) => {
+            // Try to get short commit message
+            let output = Command::new("git")
+                .args(["log", "-1", "--format=%h %s", c])
+                .current_dir(root.path())
+                .output();
+
+            if let Ok(out) = output {
+                if out.status.success() {
+                    if let Ok(msg) = std::str::from_utf8(&out.stdout) {
+                        let msg = msg.trim();
+                        if msg.len() > 50 {
+                            return format!("{}...", &msg[..47]);
+                        }
+                        return msg.to_string();
+                    }
+                }
+            }
+            format!("Commit {}", &c[..7.min(c.len())])
+        }
+        DiffSource::Range { from, to } => {
+            format!("{}..{}", &from[..7.min(from.len())], &to[..7.min(to.len())])
+        }
+        DiffSource::Base(base) => format!("vs {}", base),
     }
 }
 
