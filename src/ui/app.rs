@@ -3,8 +3,10 @@
 use ratatui::widgets::ListState;
 
 use crate::core::{
-    list_changed_files, load_head_content, load_working_content, ChangedFile, DiffResult,
-    FileChangeKind, FileViewedStore, RepoRoot, TextBuffer, ViewedStore,
+    diff_source_display, get_parent_revision, list_changed_files, list_changed_files_between,
+    list_changed_files_from_base, list_commit_files, load_head_content, load_revision_content,
+    load_working_content, ChangedFile, DiffResult, DiffSource, FileChangeKind, FileViewedStore,
+    RepoRoot, TextBuffer, ViewedStore,
 };
 use crate::highlight::{HighlighterCache, LanguageId};
 
@@ -28,8 +30,12 @@ pub enum Mode {
 pub struct App {
     /// Repository root.
     pub repo: RepoRoot,
+    /// Diff source specification.
+    pub source: DiffSource,
     /// List of changed files.
     pub files: Vec<ChangedFile>,
+    /// File path filter (only show this file if set).
+    pub file_filter: Option<String>,
     /// Currently selected file index in sidebar.
     pub selected_idx: usize,
     /// List state for sidebar scrolling.
@@ -79,9 +85,25 @@ pub struct App {
 }
 
 impl App {
-    /// Create a new App from a repository root.
-    pub fn new(repo: RepoRoot) -> anyhow::Result<Self> {
-        let files = list_changed_files(&repo)?;
+    /// Create a new App from a repository root with optional diff source and file filter.
+    pub fn new(
+        repo: RepoRoot,
+        source: DiffSource,
+        file_filter: Option<String>,
+    ) -> anyhow::Result<Self> {
+        // Load files based on diff source
+        let mut files = match &source {
+            DiffSource::WorkingTree => list_changed_files(&repo)?,
+            DiffSource::Commit(commit) => list_commit_files(&repo, commit)?,
+            DiffSource::Range { from, to } => list_changed_files_between(&repo, from, to)?,
+            DiffSource::Base(base) => list_changed_files_from_base(&repo, base)?,
+        };
+
+        // Apply file filter if set
+        if let Some(ref filter) = file_filter {
+            files.retain(|f| f.path.as_str().contains(filter));
+        }
+
         let viewed = FileViewedStore::new(repo.as_str())?;
 
         let mut list_state = ListState::default();
@@ -89,7 +111,9 @@ impl App {
 
         let mut app = Self {
             repo,
+            source,
             files,
+            file_filter,
             selected_idx: 0,
             list_state,
             focus: Focus::Sidebar,
@@ -111,11 +135,13 @@ impl App {
             current_lang: LanguageId::Plain,
         };
 
-        // Restore last selected file if available
-        if let Some(last) = app.viewed.last_selected() {
-            if let Some(idx) = app.files.iter().position(|f| f.path.as_str() == last) {
-                app.selected_idx = idx;
-                app.list_state.select(Some(idx));
+        // Restore last selected file if available (only for working tree mode)
+        if matches!(app.source, DiffSource::WorkingTree) {
+            if let Some(last) = app.viewed.last_selected() {
+                if let Some(idx) = app.files.iter().position(|f| f.path.as_str() == last) {
+                    app.selected_idx = idx;
+                    app.list_state.select(Some(idx));
+                }
             }
         }
 
@@ -125,6 +151,11 @@ impl App {
         }
 
         Ok(app)
+    }
+
+    /// Get display string for current diff source.
+    pub fn source_display(&self) -> String {
+        diff_source_display(&self.source, &self.repo)
     }
 
     /// Get the currently selected file.
@@ -149,6 +180,7 @@ impl App {
         let path = file.path.clone();
         let kind = file.kind;
         let old_path = file.old_path.clone();
+        let source = self.source.clone();
 
         // Detect language for highlighting
         self.current_lang = path
@@ -156,36 +188,31 @@ impl App {
             .map(LanguageId::from_extension)
             .unwrap_or(LanguageId::Plain);
 
-        // Load content based on change kind
-        let (old_bytes, new_bytes) = match kind {
-            FileChangeKind::Added | FileChangeKind::Untracked => {
-                match load_working_content(&self.repo, &path) {
-                    Ok(bytes) => (Vec::new(), bytes),
-                    Err(e) => {
-                        self.error_msg = Some(format!("Failed to load file: {}", e));
-                        return;
-                    }
-                }
+        // Load content based on diff source and change kind
+        let (old_bytes, new_bytes) = match source {
+            DiffSource::WorkingTree => {
+                // Working tree: compare HEAD to working directory
+                self.load_working_tree_content(&path, kind, old_path.as_ref())
             }
-            FileChangeKind::Deleted => match load_head_content(&self.repo, &path) {
-                Ok(bytes) => (bytes, Vec::new()),
-                Err(e) => {
-                    self.error_msg = Some(format!("Failed to load HEAD content: {}", e));
-                    return;
-                }
-            },
-            FileChangeKind::Modified | FileChangeKind::Renamed => {
-                let old_p = old_path.as_ref().unwrap_or(&path);
-                match (
-                    load_head_content(&self.repo, old_p),
-                    load_working_content(&self.repo, &path),
-                ) {
-                    (Ok(old), Ok(new)) => (old, new),
-                    (Err(e), _) | (_, Err(e)) => {
-                        self.error_msg = Some(format!("Failed to load content: {}", e));
-                        return;
-                    }
-                }
+            DiffSource::Commit(ref commit) => {
+                // Single commit: compare parent to commit
+                self.load_commit_content(commit, &path, kind, old_path.as_ref())
+            }
+            DiffSource::Range { ref from, ref to } => {
+                // Range: compare from to to
+                self.load_range_content(from, to, &path, kind, old_path.as_ref())
+            }
+            DiffSource::Base(ref base) => {
+                // Base: compare merge-base to working tree
+                self.load_base_content(base, &path, kind, old_path.as_ref())
+            }
+        };
+
+        let (old_bytes, new_bytes) = match (old_bytes, new_bytes) {
+            (Ok(old), Ok(new)) => (old, new),
+            (Err(e), _) | (_, Err(e)) => {
+                self.error_msg = Some(format!("Failed to load content: {}", e));
+                return;
             }
         };
 
@@ -204,9 +231,134 @@ impl App {
         self.scroll_x = 0;
         self.dirty = true;
 
-        // Update last selected
-        self.viewed
-            .set_last_selected(Some(path.as_str().to_string()));
+        // Update last selected (only for working tree mode)
+        if matches!(self.source, DiffSource::WorkingTree) {
+            self.viewed
+                .set_last_selected(Some(path.as_str().to_string()));
+        }
+    }
+
+    /// Load content for working tree diff (HEAD vs working directory).
+    fn load_working_tree_content(
+        &self,
+        path: &crate::core::RelPath,
+        kind: FileChangeKind,
+        old_path: Option<&crate::core::RelPath>,
+    ) -> (Result<Vec<u8>, crate::core::RepoError>, Result<Vec<u8>, crate::core::RepoError>) {
+        match kind {
+            FileChangeKind::Added | FileChangeKind::Untracked => {
+                (Ok(Vec::new()), load_working_content(&self.repo, path))
+            }
+            FileChangeKind::Deleted => {
+                (load_head_content(&self.repo, path), Ok(Vec::new()))
+            }
+            FileChangeKind::Modified | FileChangeKind::Renamed => {
+                let old_p = old_path.unwrap_or(path);
+                (
+                    load_head_content(&self.repo, old_p),
+                    load_working_content(&self.repo, path),
+                )
+            }
+        }
+    }
+
+    /// Load content for a single commit diff (parent vs commit).
+    fn load_commit_content(
+        &self,
+        commit: &str,
+        path: &crate::core::RelPath,
+        kind: FileChangeKind,
+        old_path: Option<&crate::core::RelPath>,
+    ) -> (Result<Vec<u8>, crate::core::RepoError>, Result<Vec<u8>, crate::core::RepoError>) {
+        let parent = match get_parent_revision(&self.repo, commit) {
+            Ok(p) => p,
+            Err(e) => {
+                let err_msg = e.to_string();
+                return (
+                    Err(crate::core::RepoError::GitError(err_msg.clone())),
+                    Err(crate::core::RepoError::GitError(err_msg)),
+                );
+            }
+        };
+
+        match kind {
+            FileChangeKind::Added => {
+                (Ok(Vec::new()), load_revision_content(&self.repo, commit, path))
+            }
+            FileChangeKind::Deleted => {
+                (load_revision_content(&self.repo, &parent, path), Ok(Vec::new()))
+            }
+            FileChangeKind::Modified | FileChangeKind::Renamed | FileChangeKind::Untracked => {
+                let old_p = old_path.unwrap_or(path);
+                (
+                    load_revision_content(&self.repo, &parent, old_p),
+                    load_revision_content(&self.repo, commit, path),
+                )
+            }
+        }
+    }
+
+    /// Load content for a range diff (from..to).
+    fn load_range_content(
+        &self,
+        from: &str,
+        to: &str,
+        path: &crate::core::RelPath,
+        kind: FileChangeKind,
+        old_path: Option<&crate::core::RelPath>,
+    ) -> (Result<Vec<u8>, crate::core::RepoError>, Result<Vec<u8>, crate::core::RepoError>) {
+        match kind {
+            FileChangeKind::Added => {
+                (Ok(Vec::new()), load_revision_content(&self.repo, to, path))
+            }
+            FileChangeKind::Deleted => {
+                (load_revision_content(&self.repo, from, path), Ok(Vec::new()))
+            }
+            FileChangeKind::Modified | FileChangeKind::Renamed | FileChangeKind::Untracked => {
+                let old_p = old_path.unwrap_or(path);
+                (
+                    load_revision_content(&self.repo, from, old_p),
+                    load_revision_content(&self.repo, to, path),
+                )
+            }
+        }
+    }
+
+    /// Load content for base comparison (merge-base vs working tree).
+    fn load_base_content(
+        &self,
+        base: &str,
+        path: &crate::core::RelPath,
+        kind: FileChangeKind,
+        old_path: Option<&crate::core::RelPath>,
+    ) -> (Result<Vec<u8>, crate::core::RepoError>, Result<Vec<u8>, crate::core::RepoError>) {
+        // Find merge-base
+        let merge_base = match std::process::Command::new("git")
+            .args(["merge-base", base, "HEAD"])
+            .current_dir(self.repo.path())
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                String::from_utf8_lossy(&out.stdout).trim().to_string()
+            }
+            _ => base.to_string(),
+        };
+
+        match kind {
+            FileChangeKind::Added | FileChangeKind::Untracked => {
+                (Ok(Vec::new()), load_working_content(&self.repo, path))
+            }
+            FileChangeKind::Deleted => {
+                (load_revision_content(&self.repo, &merge_base, path), Ok(Vec::new()))
+            }
+            FileChangeKind::Modified | FileChangeKind::Renamed => {
+                let old_p = old_path.unwrap_or(path);
+                (
+                    load_revision_content(&self.repo, &merge_base, old_p),
+                    load_working_content(&self.repo, path),
+                )
+            }
+        }
     }
 
     /// Move selection up in sidebar.
