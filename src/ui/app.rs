@@ -479,17 +479,46 @@ impl App {
     }
 
     /// Toggle viewed state for current file.
+    /// If marking as viewed, advances to next unviewed file.
     pub fn toggle_viewed(&mut self) {
         if let Some(file) = self.selected_file() {
             let path = file.path.clone();
             let now_viewed = self.viewed.toggle_viewed(path);
             if now_viewed {
                 self.viewed_in_changeset += 1;
+                self.advance_to_next_unviewed();
             } else {
                 self.viewed_in_changeset = self.viewed_in_changeset.saturating_sub(1);
             }
             self.dirty = true;
         }
+    }
+
+    /// Advance to next unviewed file, respecting filter.
+    fn advance_to_next_unviewed(&mut self) {
+        let visible = if self.filtered_indices.is_empty() {
+            (0..self.files.len()).collect::<Vec<_>>()
+        } else {
+            self.filtered_indices.clone()
+        };
+
+        // Find current position in visible list
+        let cur_pos = visible
+            .iter()
+            .position(|&i| i == self.selected_idx)
+            .unwrap_or(0);
+
+        // Search forward from current position, wrapping around
+        for offset in 1..=visible.len() {
+            let pos = (cur_pos + offset) % visible.len();
+            let idx = visible[pos];
+            if !self.viewed.is_viewed(&self.files[idx].path) {
+                self.selected_idx = idx;
+                self.request_current_diff();
+                return;
+            }
+        }
+        // All files viewed - stay on current
     }
 
     /// Scroll diff view.
