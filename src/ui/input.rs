@@ -1,6 +1,6 @@
 //! Input handling.
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 use super::app::{App, Focus, Mode};
 
@@ -9,6 +9,7 @@ use super::app::{App, Focus, Mode};
 pub fn handle_input(app: &mut App, event: Event) -> bool {
     match event {
         Event::Key(key) => handle_key(app, key),
+        Event::Mouse(mouse) => handle_mouse(app, mouse),
         _ => false,
     }
 }
@@ -251,5 +252,100 @@ fn handle_theme_selector_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         _ => true, // consume all keys in overlay
+    }
+}
+
+// ============================================================================
+// Mouse Handling
+// ============================================================================
+
+/// Sidebar width including borders (matches render.rs layout).
+const SIDEBAR_WIDTH: u16 = 32;
+
+/// Handle a mouse event.
+fn handle_mouse(app: &mut App, event: MouseEvent) -> bool {
+    // Don't handle mouse in modal modes
+    if !matches!(app.mode, Mode::Normal) {
+        return false;
+    }
+
+    match event.kind {
+        MouseEventKind::ScrollUp => {
+            handle_scroll(app, -3, event.column);
+            true
+        }
+        MouseEventKind::ScrollDown => {
+            handle_scroll(app, 3, event.column);
+            true
+        }
+        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+            handle_click(app, event.column, event.row);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Handle scroll wheel. Direction: negative = up, positive = down.
+fn handle_scroll(app: &mut App, delta: isize, x: u16) {
+    if x < SIDEBAR_WIDTH {
+        // Scroll in sidebar - navigate files
+        if delta < 0 {
+            for _ in 0..(-delta) {
+                app.select_prev();
+            }
+        } else {
+            for _ in 0..delta {
+                app.select_next();
+            }
+        }
+    } else {
+        // Scroll in diff pane
+        app.scroll_diff(delta, 0);
+    }
+}
+
+/// Handle left click.
+fn handle_click(app: &mut App, x: u16, y: u16) {
+    // Layout: row 0 = top bar, rows 1..n-1 = main, row n-1 = bottom bar
+    // Main area: sidebar is x < SIDEBAR_WIDTH, diff is x >= SIDEBAR_WIDTH
+    //
+    // Sidebar inner area (content):
+    //   x: 1..SIDEBAR_WIDTH-1 (excluding borders)
+    //   y: 2..height-2 (top bar=0, sidebar border=1, content, bottom border, bottom bar)
+
+    if y == 0 {
+        // Top bar - ignore
+        return;
+    }
+
+    if x < SIDEBAR_WIDTH {
+        // Click in sidebar region -> focus sidebar
+        app.set_focus(Focus::Sidebar);
+
+        // Calculate which file was clicked
+        // Sidebar inner area starts at y=2 (top bar + border)
+        if y >= 2 && (1..SIDEBAR_WIDTH - 1).contains(&x) {
+            let row_in_sidebar = (y - 2) as usize;
+            let clicked_visible_idx = app.sidebar_scroll + row_in_sidebar;
+
+            // Get visible files
+            let visible: Vec<usize> = if app.filtered_indices.is_empty() {
+                (0..app.files.len()).collect()
+            } else {
+                app.filtered_indices.clone()
+            };
+
+            if clicked_visible_idx < visible.len() {
+                let file_idx = visible[clicked_visible_idx];
+                if file_idx != app.selected_idx {
+                    app.selected_idx = file_idx;
+                    app.request_current_diff();
+                }
+            }
+        }
+    } else {
+        // Click in diff region -> focus diff
+        app.set_focus(Focus::Diff);
     }
 }

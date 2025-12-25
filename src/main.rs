@@ -8,7 +8,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::{
-    event, execute,
+    event::{self, DisableMouseCapture, EnableMouseCapture},
+    execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
@@ -52,15 +53,19 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn new() -> io::Result<Self> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen)?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
         Ok(Self)
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
+        // Disable mouse capture first (while still in raw mode)
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+        let _ = io::stdout().flush();
+        // Then leave alternate screen and disable raw mode
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = disable_raw_mode();
         let _ = io::stdout().flush();
     }
 }
@@ -164,8 +169,10 @@ fn run_tui(source: DiffSource, file_filter: Option<String>, theme: Option<String
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         // Restore terminal before printing panic
-        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+        let _ = io::stdout().flush();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = disable_raw_mode();
         let _ = io::stdout().flush();
         default_hook(info);
     }));
@@ -232,6 +239,9 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()>
         }
 
         if app.should_quit {
+            // Disable mouse capture before exiting
+            let _ = execute!(io::stdout(), DisableMouseCapture);
+            let _ = io::stdout().flush();
             break;
         }
     }
