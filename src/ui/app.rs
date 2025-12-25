@@ -1,12 +1,10 @@
 //! Application state and lifecycle.
 
-use ratatui::widgets::ListState;
-
 use crate::core::{
     diff_source_display, get_parent_revision, list_changed_files, list_changed_files_between,
-    list_changed_files_from_base, list_commit_files, load_head_content, load_revision_content,
-    load_working_content, ChangedFile, DiffResult, DiffSource, FileChangeKind, FileViewedStore,
-    RepoRoot, TextBuffer, ViewedStore,
+    list_changed_files_from_base_with_merge_base, list_commit_files, load_head_content,
+    load_revision_content, load_working_content, ChangedFile, DiffResult, DiffSource,
+    FileChangeKind, FileViewedStore, RepoRoot, TextBuffer, ViewedStore,
 };
 use crate::highlight::{HighlighterCache, LanguageId};
 
@@ -32,18 +30,22 @@ pub struct App {
     pub repo: RepoRoot,
     /// Diff source specification.
     pub source: DiffSource,
+    /// Cached merge-base SHA for `DiffSource::Base`.
+    pub cached_merge_base: Option<String>,
     /// List of changed files.
     pub files: Vec<ChangedFile>,
     /// File path filter (only show this file if set).
     pub file_filter: Option<String>,
     /// Currently selected file index in sidebar.
     pub selected_idx: usize,
-    /// List state for sidebar scrolling.
-    pub list_state: ListState,
+    /// Sidebar scroll offset (first visible file index).
+    pub sidebar_scroll: usize,
     /// Current focus.
     pub focus: Focus,
     /// Viewed state store.
     pub viewed: FileViewedStore,
+    /// Viewed files count in the current list.
+    pub viewed_in_changeset: usize,
     /// Should the app quit?
     pub should_quit: bool,
 
@@ -92,11 +94,14 @@ impl App {
         file_filter: Option<String>,
     ) -> anyhow::Result<Self> {
         // Load files based on diff source
-        let mut files = match &source {
-            DiffSource::WorkingTree => list_changed_files(&repo)?,
-            DiffSource::Commit(commit) => list_commit_files(&repo, commit)?,
-            DiffSource::Range { from, to } => list_changed_files_between(&repo, from, to)?,
-            DiffSource::Base(base) => list_changed_files_from_base(&repo, base)?,
+        let (mut files, cached_merge_base) = match &source {
+            DiffSource::WorkingTree => (list_changed_files(&repo)?, None),
+            DiffSource::Commit(commit) => (list_commit_files(&repo, commit)?, None),
+            DiffSource::Range { from, to } => (list_changed_files_between(&repo, from, to)?, None),
+            DiffSource::Base(base) => {
+                let result = list_changed_files_from_base_with_merge_base(&repo, base)?;
+                (result.files, Some(result.merge_base))
+            }
         };
 
         // Apply file filter if set
@@ -105,19 +110,19 @@ impl App {
         }
 
         let viewed = FileViewedStore::new(repo.as_str())?;
-
-        let mut list_state = ListState::default();
-        list_state.select(Some(0));
+        let viewed_in_changeset = files.iter().filter(|f| viewed.is_viewed(&f.path)).count();
 
         let mut app = Self {
             repo,
             source,
+            cached_merge_base,
             files,
             file_filter,
             selected_idx: 0,
-            list_state,
+            sidebar_scroll: 0,
             focus: Focus::Sidebar,
             viewed,
+            viewed_in_changeset,
             should_quit: false,
             diff: None,
             old_buffer: None,
@@ -140,7 +145,6 @@ impl App {
             if let Some(last) = app.viewed.last_selected() {
                 if let Some(idx) = app.files.iter().position(|f| f.path.as_str() == last) {
                     app.selected_idx = idx;
-                    app.list_state.select(Some(idx));
                 }
             }
         }
@@ -204,7 +208,8 @@ impl App {
             }
             DiffSource::Base(ref base) => {
                 // Base: compare merge-base to working tree
-                self.load_base_content(base, &path, kind, old_path.as_ref())
+                let merge_base = self.cached_merge_base.as_deref().unwrap_or(base.as_str());
+                self.load_base_content(merge_base, &path, kind, old_path.as_ref())
             }
         };
 
@@ -244,14 +249,15 @@ impl App {
         path: &crate::core::RelPath,
         kind: FileChangeKind,
         old_path: Option<&crate::core::RelPath>,
-    ) -> (Result<Vec<u8>, crate::core::RepoError>, Result<Vec<u8>, crate::core::RepoError>) {
+    ) -> (
+        Result<Vec<u8>, crate::core::RepoError>,
+        Result<Vec<u8>, crate::core::RepoError>,
+    ) {
         match kind {
             FileChangeKind::Added | FileChangeKind::Untracked => {
                 (Ok(Vec::new()), load_working_content(&self.repo, path))
             }
-            FileChangeKind::Deleted => {
-                (load_head_content(&self.repo, path), Ok(Vec::new()))
-            }
+            FileChangeKind::Deleted => (load_head_content(&self.repo, path), Ok(Vec::new())),
             FileChangeKind::Modified | FileChangeKind::Renamed => {
                 let old_p = old_path.unwrap_or(path);
                 (
@@ -269,7 +275,10 @@ impl App {
         path: &crate::core::RelPath,
         kind: FileChangeKind,
         old_path: Option<&crate::core::RelPath>,
-    ) -> (Result<Vec<u8>, crate::core::RepoError>, Result<Vec<u8>, crate::core::RepoError>) {
+    ) -> (
+        Result<Vec<u8>, crate::core::RepoError>,
+        Result<Vec<u8>, crate::core::RepoError>,
+    ) {
         let parent = match get_parent_revision(&self.repo, commit) {
             Ok(p) => p,
             Err(e) => {
@@ -282,12 +291,14 @@ impl App {
         };
 
         match kind {
-            FileChangeKind::Added => {
-                (Ok(Vec::new()), load_revision_content(&self.repo, commit, path))
-            }
-            FileChangeKind::Deleted => {
-                (load_revision_content(&self.repo, &parent, path), Ok(Vec::new()))
-            }
+            FileChangeKind::Added => (
+                Ok(Vec::new()),
+                load_revision_content(&self.repo, commit, path),
+            ),
+            FileChangeKind::Deleted => (
+                load_revision_content(&self.repo, &parent, path),
+                Ok(Vec::new()),
+            ),
             FileChangeKind::Modified | FileChangeKind::Renamed | FileChangeKind::Untracked => {
                 let old_p = old_path.unwrap_or(path);
                 (
@@ -306,14 +317,16 @@ impl App {
         path: &crate::core::RelPath,
         kind: FileChangeKind,
         old_path: Option<&crate::core::RelPath>,
-    ) -> (Result<Vec<u8>, crate::core::RepoError>, Result<Vec<u8>, crate::core::RepoError>) {
+    ) -> (
+        Result<Vec<u8>, crate::core::RepoError>,
+        Result<Vec<u8>, crate::core::RepoError>,
+    ) {
         match kind {
-            FileChangeKind::Added => {
-                (Ok(Vec::new()), load_revision_content(&self.repo, to, path))
-            }
-            FileChangeKind::Deleted => {
-                (load_revision_content(&self.repo, from, path), Ok(Vec::new()))
-            }
+            FileChangeKind::Added => (Ok(Vec::new()), load_revision_content(&self.repo, to, path)),
+            FileChangeKind::Deleted => (
+                load_revision_content(&self.repo, from, path),
+                Ok(Vec::new()),
+            ),
             FileChangeKind::Modified | FileChangeKind::Renamed | FileChangeKind::Untracked => {
                 let old_p = old_path.unwrap_or(path);
                 (
@@ -327,34 +340,26 @@ impl App {
     /// Load content for base comparison (merge-base vs working tree).
     fn load_base_content(
         &self,
-        base: &str,
+        merge_base: &str,
         path: &crate::core::RelPath,
         kind: FileChangeKind,
         old_path: Option<&crate::core::RelPath>,
-    ) -> (Result<Vec<u8>, crate::core::RepoError>, Result<Vec<u8>, crate::core::RepoError>) {
-        // Find merge-base
-        let merge_base = match std::process::Command::new("git")
-            .args(["merge-base", base, "HEAD"])
-            .current_dir(self.repo.path())
-            .output()
-        {
-            Ok(out) if out.status.success() => {
-                String::from_utf8_lossy(&out.stdout).trim().to_string()
-            }
-            _ => base.to_string(),
-        };
-
+    ) -> (
+        Result<Vec<u8>, crate::core::RepoError>,
+        Result<Vec<u8>, crate::core::RepoError>,
+    ) {
         match kind {
             FileChangeKind::Added | FileChangeKind::Untracked => {
                 (Ok(Vec::new()), load_working_content(&self.repo, path))
             }
-            FileChangeKind::Deleted => {
-                (load_revision_content(&self.repo, &merge_base, path), Ok(Vec::new()))
-            }
+            FileChangeKind::Deleted => (
+                load_revision_content(&self.repo, merge_base, path),
+                Ok(Vec::new()),
+            ),
             FileChangeKind::Modified | FileChangeKind::Renamed => {
                 let old_p = old_path.unwrap_or(path);
                 (
-                    load_revision_content(&self.repo, &merge_base, old_p),
+                    load_revision_content(&self.repo, merge_base, old_p),
                     load_working_content(&self.repo, path),
                 )
             }
@@ -365,7 +370,6 @@ impl App {
     pub fn select_prev(&mut self) {
         if self.selected_idx > 0 {
             self.selected_idx -= 1;
-            self.list_state.select(Some(self.selected_idx));
             self.load_current_diff();
             self.dirty = true;
         }
@@ -375,7 +379,6 @@ impl App {
     pub fn select_next(&mut self) {
         if self.selected_idx + 1 < self.files.len() {
             self.selected_idx += 1;
-            self.list_state.select(Some(self.selected_idx));
             self.load_current_diff();
             self.dirty = true;
         }
@@ -385,7 +388,12 @@ impl App {
     pub fn toggle_viewed(&mut self) {
         if let Some(file) = self.selected_file() {
             let path = file.path.clone();
-            self.viewed.toggle_viewed(path);
+            let now_viewed = self.viewed.toggle_viewed(path);
+            if now_viewed {
+                self.viewed_in_changeset += 1;
+            } else {
+                self.viewed_in_changeset = self.viewed_in_changeset.saturating_sub(1);
+            }
             self.dirty = true;
         }
     }
@@ -466,13 +474,7 @@ impl App {
     /// Get viewed/total count string.
     /// Only counts files that are currently in the changed list.
     pub fn viewed_status(&self) -> String {
-        let viewed = self
-            .files
-            .iter()
-            .filter(|f| self.viewed.is_viewed(&f.path))
-            .count();
-        let total = self.files.len();
-        format!("{}/{}", viewed, total)
+        format!("{}/{}", self.viewed_in_changeset, self.files.len())
     }
 
     /// Mark dirty for redraw.
