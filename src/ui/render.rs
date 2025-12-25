@@ -1031,6 +1031,12 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     // Filter mode
     if app.mode == Mode::FilterFiles {
+        let match_count = if app.sidebar_filter.is_empty() {
+            app.files.len()
+        } else {
+            app.filtered_indices.len()
+        };
+        let match_info = format!(" ({}/{})", match_count, app.files.len());
         let line = Line::from(vec![
             Span::styled(
                 " Filter: ",
@@ -1048,6 +1054,12 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
                 "█",
                 Style::default()
                     .fg(app.theme.accent)
+                    .bg(app.theme.bg_elevated),
+            ),
+            Span::styled(
+                match_info,
+                Style::default()
+                    .fg(app.theme.text_muted)
                     .bg(app.theme.bg_elevated),
             ),
             Span::styled(

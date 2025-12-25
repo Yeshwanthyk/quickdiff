@@ -220,12 +220,12 @@ fn handle_filter_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Backspace => {
             app.sidebar_filter.pop();
-            app.mark_dirty();
+            app.update_filter_live();
             true
         }
         KeyCode::Char(c) => {
             app.sidebar_filter.push(c);
-            app.mark_dirty();
+            app.update_filter_live();
             true
         }
         _ => false,

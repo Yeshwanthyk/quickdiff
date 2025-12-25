@@ -6,8 +6,8 @@ use crate::core::{
     diff_source_display, digest_hunk_changed_rows, format_anchor_summary, list_changed_files,
     list_changed_files_between, list_changed_files_from_base_with_merge_base, list_commit_files,
     resolve_revision, selector_from_hunk, Anchor, ChangedFile, CommentContext, CommentStatus,
-    CommentStore, DiffResult, DiffSource, FileCommentStore, FileViewedStore, RelPath, RepoRoot,
-    RepoWatcher, Selector, TextBuffer, ViewedStore,
+    CommentStore, DiffResult, DiffSource, FileCommentStore, FileViewedStore, FuzzyMatcher, RelPath,
+    RepoRoot, RepoWatcher, Selector, TextBuffer, ViewedStore,
 };
 use crate::highlight::{HighlighterCache, LanguageId};
 use crate::theme::Theme;
@@ -113,6 +113,8 @@ pub struct App {
     pub sidebar_filter: String,
     /// Filtered file indices (empty = show all).
     pub filtered_indices: Vec<usize>,
+    /// Fuzzy matcher for file filtering.
+    fuzzy_matcher: FuzzyMatcher,
     /// Last error message to display.
     pub error_msg: Option<String>,
     /// Status message to display (non-error).
@@ -249,6 +251,7 @@ impl App {
             viewing_include_resolved: false,
             sidebar_filter: String::new(),
             filtered_indices: Vec::new(),
+            fuzzy_matcher: FuzzyMatcher::new(),
             error_msg: None,
             status_msg: None,
             dirty: true,
@@ -986,19 +989,26 @@ impl App {
         self.dirty = true;
     }
 
-    /// Apply the current filter query.
+    /// Apply the current filter query using fuzzy matching.
     pub fn apply_filter(&mut self) {
-        let query = self.sidebar_filter.trim().to_lowercase();
+        self.recompute_filter();
+        self.mode = Mode::Normal;
+        self.dirty = true;
+    }
+
+    /// Recompute filtered indices from current query (for live filtering).
+    fn recompute_filter(&mut self) {
+        let query = self.sidebar_filter.trim();
         if query.is_empty() {
             self.filtered_indices.clear();
         } else {
-            self.filtered_indices = self
-                .files
-                .iter()
-                .enumerate()
-                .filter(|(_, f)| f.path.as_str().to_lowercase().contains(&query))
-                .map(|(i, _)| i)
-                .collect();
+            self.filtered_indices = self.fuzzy_matcher.filter_sorted(
+                query,
+                self.files
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| (i, f.path.as_str())),
+            );
         }
         // Reset selection to first match if current selection is filtered out
         if !self.filtered_indices.is_empty() && !self.filtered_indices.contains(&self.selected_idx)
@@ -1006,7 +1016,11 @@ impl App {
             self.selected_idx = self.filtered_indices[0];
             self.request_current_diff();
         }
-        self.mode = Mode::Normal;
+    }
+
+    /// Update filter live as user types.
+    pub fn update_filter_live(&mut self) {
+        self.recompute_filter();
         self.dirty = true;
     }
 
