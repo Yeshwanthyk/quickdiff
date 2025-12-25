@@ -1,9 +1,13 @@
 //! Application state and lifecycle.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::core::{
-    diff_source_display, list_changed_files, list_changed_files_between,
-    list_changed_files_from_base_with_merge_base, list_commit_files, ChangedFile, DiffResult,
-    DiffSource, FileViewedStore, RepoRoot, TextBuffer, ViewedStore,
+    diff_source_display, digest_hunk_changed_rows, format_anchor_summary, list_changed_files,
+    list_changed_files_between, list_changed_files_from_base_with_merge_base, list_commit_files,
+    resolve_revision, selector_from_hunk, Anchor, ChangedFile, CommentContext, CommentStatus,
+    CommentStore, DiffResult, DiffSource, FileCommentStore, FileViewedStore, RelPath, RepoRoot,
+    Selector, TextBuffer, ViewedStore,
 };
 use crate::highlight::{HighlighterCache, LanguageId};
 
@@ -25,6 +29,16 @@ pub enum Mode {
     ViewComments,
 }
 
+#[derive(Debug, Clone)]
+pub struct CommentViewItem {
+    pub id: u64,
+    pub status: CommentStatus,
+    pub message: String,
+    pub anchor_summary: String,
+    pub hunk_start_row: Option<usize>,
+    pub stale: bool,
+}
+
 /// Application state.
 pub struct App {
     /// Repository root.
@@ -33,6 +47,8 @@ pub struct App {
     pub source: DiffSource,
     /// Cached merge-base SHA for `DiffSource::Base`.
     pub cached_merge_base: Option<String>,
+    /// Comment context for this view.
+    pub comment_context: CommentContext,
     /// List of changed files.
     pub files: Vec<ChangedFile>,
     /// File path filter (only show this file if set).
@@ -47,6 +63,10 @@ pub struct App {
     pub viewed: FileViewedStore,
     /// Viewed files count in the current list.
     pub viewed_in_changeset: usize,
+    /// Open comment counts for this context.
+    pub open_comment_counts: HashMap<RelPath, usize>,
+    /// Hunks (by index) that have open comments in this context for the selected file.
+    pub commented_hunks: HashSet<usize>,
     /// Should the app quit?
     pub should_quit: bool,
 
@@ -78,7 +98,10 @@ pub struct App {
     /// Draft comment text (when in AddComment mode).
     pub draft_comment: String,
     /// Comments to display in ViewComments mode.
-    pub viewing_comments: Vec<(u64, String)>,
+    pub viewing_comments: Vec<CommentViewItem>,
+    pub viewing_comments_selected: usize,
+    pub viewing_comments_scroll: usize,
+    pub viewing_include_resolved: bool,
     /// Last error message to display.
     pub error_msg: Option<String>,
     /// Status message to display (non-error).
@@ -93,6 +116,35 @@ pub struct App {
     pub current_lang: LanguageId,
 }
 
+fn comment_context_for_source(source: &DiffSource) -> CommentContext {
+    match source {
+        DiffSource::WorkingTree => CommentContext::Worktree,
+        DiffSource::Base(base) => CommentContext::Base { base: base.clone() },
+        DiffSource::Commit(commit) => CommentContext::Commit {
+            commit: commit.clone(),
+        },
+        DiffSource::Range { from, to } => CommentContext::Range {
+            from: from.clone(),
+            to: to.clone(),
+        },
+    }
+}
+
+fn load_open_comment_counts(repo: &RepoRoot, context: &CommentContext) -> HashMap<RelPath, usize> {
+    let Ok(store) = FileCommentStore::open(repo) else {
+        return HashMap::new();
+    };
+
+    let mut counts: HashMap<RelPath, usize> = HashMap::new();
+    for c in store.list(false) {
+        if c.context.matches(context) {
+            *counts.entry(c.path.clone()).or_insert(0) += 1;
+        }
+    }
+
+    counts
+}
+
 impl App {
     /// Create a new App from a repository root with optional diff source and file filter.
     pub fn new(
@@ -100,6 +152,20 @@ impl App {
         source: DiffSource,
         file_filter: Option<String>,
     ) -> anyhow::Result<Self> {
+        // Canonicalize commit/range sources so comment contexts match across invocations.
+        let source = match source {
+            DiffSource::Commit(commit) => {
+                DiffSource::Commit(resolve_revision(&repo, &commit)?.to_string())
+            }
+            DiffSource::Range { from, to } => DiffSource::Range {
+                from: resolve_revision(&repo, &from)?.to_string(),
+                to: resolve_revision(&repo, &to)?.to_string(),
+            },
+            other => other,
+        };
+
+        let comment_context = comment_context_for_source(&source);
+
         // Load files based on diff source
         let (mut files, cached_merge_base) = match &source {
             DiffSource::WorkingTree => (list_changed_files(&repo)?, None),
@@ -119,12 +185,15 @@ impl App {
         let viewed = FileViewedStore::new(repo.as_str())?;
         let viewed_in_changeset = files.iter().filter(|f| viewed.is_viewed(&f.path)).count();
 
+        let open_comment_counts = load_open_comment_counts(&repo, &comment_context);
+
         let worker = spawn_diff_worker(repo.clone());
 
         let mut app = Self {
             repo,
             source,
             cached_merge_base,
+            comment_context,
             files,
             file_filter,
             selected_idx: 0,
@@ -132,6 +201,8 @@ impl App {
             focus: Focus::Sidebar,
             viewed,
             viewed_in_changeset,
+            open_comment_counts,
+            commented_hunks: HashSet::new(),
             should_quit: false,
             worker,
             next_request_id: 1,
@@ -146,6 +217,9 @@ impl App {
             mode: Mode::default(),
             draft_comment: String::new(),
             viewing_comments: Vec::new(),
+            viewing_comments_selected: 0,
+            viewing_comments_scroll: 0,
+            viewing_include_resolved: false,
             error_msg: None,
             status_msg: None,
             dirty: true,
@@ -180,6 +254,47 @@ impl App {
         self.files.get(self.selected_idx)
     }
 
+    fn refresh_current_file_comment_markers(&mut self) {
+        self.commented_hunks.clear();
+
+        let Some(diff) = &self.diff else {
+            return;
+        };
+        let Some(file) = self.selected_file() else {
+            return;
+        };
+
+        let Ok(store) = FileCommentStore::open(&self.repo) else {
+            return;
+        };
+
+        let comments = store.list_for_path(&file.path, false);
+        if comments.is_empty() {
+            return;
+        }
+
+        let mut digest_to_hunk_idx: HashMap<String, usize> = HashMap::new();
+        for (idx, h) in diff.hunks.iter().enumerate() {
+            digest_to_hunk_idx.insert(digest_hunk_changed_rows(diff, h), idx);
+        }
+
+        for c in comments {
+            if !c.context.matches(&self.comment_context) {
+                continue;
+            }
+
+            for sel in &c.anchor.selectors {
+                match sel {
+                    Selector::DiffHunkV1(h) => {
+                        if let Some(idx) = digest_to_hunk_idx.get(&h.digest_hex) {
+                            self.commented_hunks.insert(*idx);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Request diff for the currently selected file.
     ///
     /// Work is performed on a background thread. Call `poll_worker()` to apply results.
@@ -187,6 +302,7 @@ impl App {
         self.error_msg = None;
         self.status_msg = None;
         self.is_binary = false;
+        self.commented_hunks.clear();
 
         let Some(file) = self.selected_file().cloned() else {
             self.diff = None;
@@ -262,6 +378,7 @@ impl App {
                     self.old_buffer = Some(old_buffer);
                     self.new_buffer = Some(new_buffer);
                     self.diff = diff;
+                    self.refresh_current_file_comment_markers();
                     self.dirty = true;
                 }
                 DiffLoadResponse::Error { id, message } => {
@@ -274,6 +391,7 @@ impl App {
                     self.diff = None;
                     self.old_buffer = None;
                     self.new_buffer = None;
+                    self.commented_hunks.clear();
                     self.error_msg = Some(format!("Failed to load diff: {}", message));
                     self.dirty = true;
                 }
@@ -404,7 +522,6 @@ impl App {
 
     /// Start adding a comment on the current hunk.
     pub fn start_add_comment(&mut self) {
-        // Check if we have a diff and are on a hunk
         let Some(diff) = &self.diff else {
             self.error_msg = Some("No diff available".to_string());
             self.dirty = true;
@@ -417,7 +534,6 @@ impl App {
             return;
         }
 
-        // Check if current scroll position is within a hunk
         if diff.hunk_at_row(self.scroll_y).is_none() {
             self.error_msg = Some("Not on a hunk - navigate to a hunk first".to_string());
             self.dirty = true;
@@ -440,8 +556,6 @@ impl App {
 
     /// Save the current draft comment.
     pub fn save_comment(&mut self) {
-        use crate::core::{selector_from_hunk, Anchor, CommentStore, FileCommentStore, Selector};
-
         if self.draft_comment.trim().is_empty() {
             self.error_msg = Some("Comment cannot be empty".to_string());
             self.dirty = true;
@@ -471,7 +585,6 @@ impl App {
 
         let path = file.path.clone();
 
-        // Build selector from hunk
         let Some(selector) = selector_from_hunk(diff, hunk_idx) else {
             self.error_msg = Some("Failed to create comment anchor".to_string());
             self.mode = Mode::Normal;
@@ -483,7 +596,6 @@ impl App {
             selectors: vec![Selector::DiffHunkV1(selector)],
         };
 
-        // Save to store
         let mut store = match FileCommentStore::open(&self.repo) {
             Ok(s) => s,
             Err(e) => {
@@ -494,10 +606,17 @@ impl App {
             }
         };
 
-        match store.add(path, self.draft_comment.clone(), anchor) {
+        match store.add(
+            path.clone(),
+            self.comment_context.clone(),
+            self.draft_comment.clone(),
+            anchor,
+        ) {
             Ok(id) => {
                 self.status_msg = Some(format!("Comment {} saved", id));
                 self.error_msg = None;
+                *self.open_comment_counts.entry(path).or_insert(0) += 1;
+                self.commented_hunks.insert(hunk_idx);
             }
             Err(e) => {
                 self.error_msg = Some(format!("Failed to save comment: {}", e));
@@ -509,40 +628,214 @@ impl App {
         self.dirty = true;
     }
 
-    /// Show comments overlay for current hunk.
-    pub fn show_comments(&mut self) {
-        use crate::core::{CommentStore, FileCommentStore};
-
+    fn refresh_viewing_comments(&mut self) {
         let Some(file) = self.selected_file() else {
+            self.viewing_comments.clear();
+            self.viewing_comments_selected = 0;
+            self.viewing_comments_scroll = 0;
             return;
         };
-        let path = file.path.clone();
 
-        let store = match FileCommentStore::open(&self.repo) {
-            Ok(s) => s,
-            Err(_) => return,
+        let include_resolved = self.viewing_include_resolved;
+
+        let Ok(store) = FileCommentStore::open(&self.repo) else {
+            self.viewing_comments.clear();
+            self.viewing_comments_selected = 0;
+            self.viewing_comments_scroll = 0;
+            return;
         };
 
-        // Get all open comments for this file
-        let comments = store.list_for_path(&path, false);
+        let comments = store.list_for_path(&file.path, include_resolved);
 
-        if comments.is_empty() {
+        let selected_id = self
+            .viewing_comments
+            .get(self.viewing_comments_selected)
+            .map(|c| c.id);
+
+        let mut digest_to_start_row: HashMap<String, usize> = HashMap::new();
+        if let Some(diff) = &self.diff {
+            for h in &diff.hunks {
+                digest_to_start_row.insert(digest_hunk_changed_rows(diff, h), h.start_row);
+            }
+        }
+
+        let mut items: Vec<CommentViewItem> = Vec::new();
+        for c in comments {
+            if !c.context.matches(&self.comment_context) {
+                continue;
+            }
+
+            let mut hunk_start_row = None;
+            let mut stale = false;
+
+            if let Some(Selector::DiffHunkV1(h)) = c.anchor.selectors.first() {
+                if let Some(row) = digest_to_start_row.get(&h.digest_hex) {
+                    hunk_start_row = Some(*row);
+                } else if !digest_to_start_row.is_empty() {
+                    stale = true;
+                }
+            }
+
+            items.push(CommentViewItem {
+                id: c.id,
+                status: c.status,
+                message: c.message.clone(),
+                anchor_summary: format_anchor_summary(&c.anchor),
+                hunk_start_row,
+                stale,
+            });
+        }
+
+        items.sort_by_key(|c| (c.status != CommentStatus::Open, c.id));
+
+        self.viewing_comments = items;
+
+        self.viewing_comments_selected = match selected_id {
+            Some(id) => self
+                .viewing_comments
+                .iter()
+                .position(|c| c.id == id)
+                .unwrap_or(0),
+            None => 0,
+        };
+
+        if self.viewing_comments.is_empty() {
+            self.viewing_comments_selected = 0;
+            self.viewing_comments_scroll = 0;
+        } else {
+            self.viewing_comments_selected = self
+                .viewing_comments_selected
+                .min(self.viewing_comments.len() - 1);
+            self.viewing_comments_scroll = self
+                .viewing_comments_scroll
+                .min(self.viewing_comments.len() - 1);
+        }
+    }
+
+    /// Show comments overlay for current file.
+    pub fn show_comments(&mut self) {
+        self.viewing_include_resolved = false;
+        self.viewing_comments_selected = 0;
+        self.viewing_comments_scroll = 0;
+        self.refresh_viewing_comments();
+
+        if self.viewing_comments.is_empty() {
             self.status_msg = Some("No comments on this file".to_string());
             self.dirty = true;
             return;
         }
 
-        // Collect id + message pairs
-        self.viewing_comments = comments.iter().map(|c| (c.id, c.message.clone())).collect();
-
         self.mode = Mode::ViewComments;
         self.dirty = true;
     }
 
-    /// Close comments overlay.
     pub fn close_comments(&mut self) {
         self.mode = Mode::Normal;
         self.viewing_comments.clear();
+        self.viewing_comments_selected = 0;
+        self.viewing_comments_scroll = 0;
+        self.dirty = true;
+    }
+
+    pub fn comments_select_next(&mut self) {
+        if self.viewing_comments.is_empty() {
+            return;
+        }
+        self.viewing_comments_selected =
+            (self.viewing_comments_selected + 1).min(self.viewing_comments.len() - 1);
+        self.dirty = true;
+    }
+
+    pub fn comments_select_prev(&mut self) {
+        self.viewing_comments_selected = self.viewing_comments_selected.saturating_sub(1);
+        self.dirty = true;
+    }
+
+    pub fn comments_toggle_include_resolved(&mut self) {
+        self.viewing_include_resolved = !self.viewing_include_resolved;
+        self.refresh_viewing_comments();
+        self.dirty = true;
+    }
+
+    pub fn comments_jump_to_selected(&mut self) {
+        if self.viewing_comments.is_empty() {
+            return;
+        }
+
+        let Some(item) = self
+            .viewing_comments
+            .get(self.viewing_comments_selected)
+            .cloned()
+        else {
+            return;
+        };
+
+        let Some(row) = item.hunk_start_row else {
+            self.status_msg = Some("Comment anchor is stale (hunk not found)".to_string());
+            self.dirty = true;
+            return;
+        };
+
+        self.scroll_y = row;
+        self.focus = Focus::Diff;
+        self.close_comments();
+        self.dirty = true;
+    }
+
+    pub fn comments_resolve_selected(&mut self) {
+        if self.viewing_comments.is_empty() {
+            return;
+        }
+
+        let Some(item) = self
+            .viewing_comments
+            .get(self.viewing_comments_selected)
+            .cloned()
+        else {
+            return;
+        };
+
+        if item.status != CommentStatus::Open {
+            self.status_msg = Some("Comment already resolved".to_string());
+            self.dirty = true;
+            return;
+        }
+
+        let mut store = match FileCommentStore::open(&self.repo) {
+            Ok(s) => s,
+            Err(e) => {
+                self.error_msg = Some(format!("Failed to open comment store: {}", e));
+                self.dirty = true;
+                return;
+            }
+        };
+
+        match store.resolve(item.id) {
+            Ok(true) => {
+                if let Some(path) = self.selected_file().map(|f| f.path.clone()) {
+                    let should_remove = match self.open_comment_counts.get_mut(&path) {
+                        Some(count) => {
+                            *count = count.saturating_sub(1);
+                            *count == 0
+                        }
+                        None => false,
+                    };
+                    if should_remove {
+                        self.open_comment_counts.remove(&path);
+                    }
+                }
+                self.refresh_current_file_comment_markers();
+                self.refresh_viewing_comments();
+                self.status_msg = Some(format!("Resolved comment {}", item.id));
+            }
+            Ok(false) => {
+                self.error_msg = Some(format!("Comment {} not found", item.id));
+            }
+            Err(e) => {
+                self.error_msg = Some(format!("Failed to resolve comment: {}", e));
+            }
+        }
+
         self.dirty = true;
     }
 }

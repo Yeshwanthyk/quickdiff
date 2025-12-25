@@ -168,6 +168,26 @@ fn handle_view_comments_key(app: &mut App, key: KeyEvent) -> bool {
             app.close_comments();
             true
         }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.comments_select_next();
+            true
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.comments_select_prev();
+            true
+        }
+        KeyCode::Enter => {
+            app.comments_jump_to_selected();
+            true
+        }
+        KeyCode::Char('r') => {
+            app.comments_resolve_selected();
+            true
+        }
+        KeyCode::Char('a') => {
+            app.comments_toggle_include_resolved();
+            true
+        }
         _ => true, // consume all keys in overlay
     }
 }

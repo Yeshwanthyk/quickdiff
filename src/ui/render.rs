@@ -13,7 +13,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::core::{ChangeKind, FileChangeKind, ViewedStore};
+use crate::core::{ChangeKind, CommentStatus, FileChangeKind, ViewedStore};
 use crate::highlight::StyleId;
 
 use super::app::{App, Focus, Mode};
@@ -85,7 +85,7 @@ use palette::*;
 // ============================================================================
 
 /// Max width for path display in sidebar.
-const SIDEBAR_PATH_WIDTH: usize = 26;
+const SIDEBAR_PATH_WIDTH: usize = 22;
 
 // ============================================================================
 // Syntax Highlighting
@@ -191,6 +191,18 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
             "  [binary]",
             Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
         ));
+    }
+
+    // Open comments for this file (in current context)
+    if let Some(file) = file {
+        if let Some(count) = app.open_comment_counts.get(&file.path) {
+            if *count > 0 {
+                spans.push(Span::styled(
+                    format!("  {} comments", count),
+                    Style::default().fg(ACCENT).bg(BG_ELEVATED),
+                ));
+            }
+        }
     }
 
     // Pad to fill width
@@ -299,6 +311,19 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         let viewed_char = if is_viewed { '✓' } else { '·' };
         let viewed_color = if is_viewed { SUCCESS } else { TEXT_FAINT };
 
+        let comment_count = app
+            .open_comment_counts
+            .get(&file.path)
+            .copied()
+            .unwrap_or(0);
+        let (comment_text, comment_color) = if comment_count == 0 {
+            ("  ".to_string(), TEXT_FAINT)
+        } else if comment_count < 10 {
+            (format!(" {}", comment_count), ACCENT)
+        } else {
+            ("9+".to_string(), ACCENT)
+        };
+
         // Ellipsize path
         let path = file.path.as_str();
         let display_path = if path.len() > SIDEBAR_PATH_WIDTH {
@@ -327,6 +352,8 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
                 viewed_char.to_string(),
                 Style::default().fg(viewed_color).bg(row_bg),
             ),
+            Span::styled(" ", Style::default().bg(row_bg)),
+            Span::styled(comment_text, Style::default().fg(comment_color).bg(row_bg)),
             Span::styled(" ", Style::default().bg(row_bg)),
             Span::styled(display_path, Style::default().fg(text_color).bg(row_bg)),
         ]));
@@ -385,7 +412,7 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
 
-    if diff.rows.is_empty() {
+    if diff.rows.is_empty() || !diff.has_changes() {
         let msg = Paragraph::new("Files are identical").style(Style::default().fg(TEXT_MUTED));
         frame.render_widget(msg, inner);
         return;
@@ -432,13 +459,18 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         bg_color: Color,
         code_spans: Vec<Span<'static>>,
         visible_len: usize,
+        has_comment: bool,
     }
 
     // First pass: build spans and compute max visible width in this viewport.
     let mut rendered: Vec<RenderedLine> = Vec::with_capacity(height);
     let mut max_visible_len = 0usize;
 
-    for row in diff.render_rows(app.scroll_y, height) {
+    for (offset, row) in diff.render_rows(app.scroll_y, height).enumerate() {
+        let row_idx = app.scroll_y + offset;
+        let has_comment = diff
+            .hunk_at_row(row_idx)
+            .is_some_and(|h| app.commented_hunks.contains(&h));
         // Extract line info based on pane side
         let (line_ref, bg_color, inline_bg) = if is_old {
             match (&row.old, row.kind) {
@@ -586,6 +618,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             bg_color,
             code_spans,
             visible_len,
+            has_comment,
         });
     }
 
@@ -623,8 +656,15 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                     Style::default().bg(row.bg_color),
                 ));
             }
+            let marker_char = if row.has_comment { "•" } else { " " };
+            let marker_style = if row.has_comment {
+                Style::default().fg(ACCENT).bg(row.bg_color)
+            } else {
+                Style::default().bg(row.bg_color)
+            };
+            spans.push(Span::styled(marker_char, marker_style));
             spans.push(Span::styled(
-                " │",
+                "│",
                 Style::default().fg(GUTTER_SEP).bg(row.bg_color),
             ));
             spans.push(Span::styled(
@@ -637,9 +677,16 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                 Style::default().fg(TEXT_FAINT).bg(row.bg_color),
             ));
             spans.push(Span::styled(
-                "│ ",
+                "│",
                 Style::default().fg(GUTTER_SEP).bg(row.bg_color),
             ));
+            let marker_char = if row.has_comment { "•" } else { " " };
+            let marker_style = if row.has_comment {
+                Style::default().fg(ACCENT).bg(row.bg_color)
+            } else {
+                Style::default().bg(row.bg_color)
+            };
+            spans.push(Span::styled(marker_char, marker_style));
             spans.extend(row.code_spans);
             let trailing = max_content.saturating_sub(row.visible_len);
             if trailing > 0 {
@@ -681,7 +728,7 @@ fn render_comments_overlay(frame: &mut Frame, app: &App) {
     let width = (area.width * 3 / 4).clamp(min_overlay_width, max_overlay_width);
 
     let max_overlay_height = area.height.saturating_sub(4).max(1);
-    let min_overlay_height = 5.min(max_overlay_height);
+    let min_overlay_height = 6.min(max_overlay_height);
     let height =
         (app.viewing_comments.len() as u16 + 4).clamp(min_overlay_height, max_overlay_height);
 
@@ -691,35 +738,114 @@ fn render_comments_overlay(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, overlay_area);
 
-    let mut lines: Vec<Line> = Vec::new();
-    for (id, msg) in &app.viewing_comments {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("#{} ", id),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(msg.as_str(), Style::default().fg(TEXT_NORMAL)),
-        ]));
-    }
-
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "No comments",
-            Style::default().fg(TEXT_MUTED),
-        )));
-    }
+    let title = if app.viewing_include_resolved {
+        " Comments (all) "
+    } else {
+        " Comments (open) "
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT))
         .title(Span::styled(
-            " Comments ",
+            title,
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(BG_ELEVATED));
 
-    let para = Paragraph::new(lines).block(block);
-    frame.render_widget(para, overlay_area);
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if inner.height == 0 {
+        return;
+    }
+
+    if app.viewing_comments.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No comments",
+            Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
+        )));
+    } else {
+        let total = app.viewing_comments.len();
+        let selected = app.viewing_comments_selected.min(total - 1);
+        let visible = inner.height as usize;
+
+        let scroll = (selected + 1).saturating_sub(visible);
+
+        let end = (scroll + visible).min(total);
+
+        for idx in scroll..end {
+            let item = &app.viewing_comments[idx];
+            let is_selected = idx == selected;
+
+            let row_bg = if is_selected {
+                BG_SELECTED
+            } else {
+                BG_ELEVATED
+            };
+            let msg_color = if item.status == CommentStatus::Resolved {
+                TEXT_DIM
+            } else {
+                TEXT_NORMAL
+            };
+
+            let status_char = if item.status == CommentStatus::Resolved {
+                "✓"
+            } else {
+                " "
+            };
+
+            let mut spans: Vec<Span> = Vec::new();
+            spans.push(Span::styled(
+                if is_selected { "▌" } else { " " },
+                Style::default().fg(ACCENT).bg(row_bg),
+            ));
+            spans.push(Span::styled(
+                format!("#{} ", item.id),
+                Style::default()
+                    .fg(ACCENT)
+                    .bg(row_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                status_char,
+                Style::default().fg(SUCCESS).bg(row_bg),
+            ));
+            spans.push(Span::styled(" ", Style::default().bg(row_bg)));
+            spans.push(Span::styled(
+                item.anchor_summary.as_str(),
+                Style::default().fg(TEXT_MUTED).bg(row_bg),
+            ));
+            if item.stale {
+                spans.push(Span::styled(
+                    " [stale]",
+                    Style::default().fg(WARNING).bg(row_bg),
+                ));
+            }
+            spans.push(Span::styled(
+                " - ",
+                Style::default().fg(TEXT_MUTED).bg(row_bg),
+            ));
+            spans.push(Span::styled(
+                item.message.as_str(),
+                Style::default().fg(msg_color).bg(row_bg),
+            ));
+
+            lines.push(Line::from(spans));
+        }
+    }
+
+    while lines.len() < inner.height as usize {
+        lines.push(Line::from(Span::styled(
+            "",
+            Style::default().bg(BG_ELEVATED),
+        )));
+    }
+
+    let para = Paragraph::new(lines).style(Style::default().bg(BG_ELEVATED));
+    frame.render_widget(para, inner);
 }
 
 // ============================================================================
@@ -742,6 +868,28 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
             ),
         ]);
         // Pad remaining
+        let para = Paragraph::new(line).style(Style::default().bg(BG_ELEVATED));
+        frame.render_widget(para, area);
+        return;
+    }
+
+    // Comments overlay mode
+    if app.mode == Mode::ViewComments {
+        let scope = if app.viewing_include_resolved {
+            "all"
+        } else {
+            "open"
+        };
+        let line = Line::from(vec![
+            Span::styled(
+                format!(" Comments ({}) ", scope),
+                Style::default().fg(ACCENT).bg(BG_ELEVATED),
+            ),
+            Span::styled(
+                " j/k: move  Enter: jump  r: resolve  a: all/open  Esc: close",
+                Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
+            ),
+        ]);
         let para = Paragraph::new(line).style(Style::default().bg(BG_ELEVATED));
         frame.render_widget(para, area);
         return;

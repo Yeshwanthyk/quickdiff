@@ -210,6 +210,9 @@ fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
             s if s.starts_with('R') || s.starts_with('C') => {
                 // Rename/Copy: next entry is the old/original path
                 if let Some(old) = parts.next() {
+                    if path.starts_with(".quickdiff/") || old.starts_with(".quickdiff/") {
+                        continue;
+                    }
                     files.push(ChangedFile::renamed(RelPath::new(old), RelPath::new(path)));
                     continue;
                 }
@@ -217,6 +220,10 @@ fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
             }
             _ => FileChangeKind::Modified, // fallback
         };
+
+        if path.starts_with(".quickdiff/") {
+            continue;
+        }
 
         files.push(ChangedFile::new(RelPath::new(path), kind));
     }
@@ -606,6 +613,14 @@ mod tests {
         let output = b" M file1.rs\0?? file2.txt\0A  file3.rs\0";
         let files = parse_porcelain_status(output).unwrap();
         assert_eq!(files.len(), 3);
+    }
+
+    #[test]
+    fn parse_porcelain_ignores_quickdiff_state() {
+        let output = b"?? .quickdiff/comments.json\0 M src/lib.rs\0";
+        let files = parse_porcelain_status(output).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path.as_str(), "src/lib.rs");
     }
 
     #[test]

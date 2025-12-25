@@ -7,6 +7,41 @@ use crate::core::{ChangeKind, DiffResult, Hunk, RelPath};
 /// Comment identifier.
 pub type CommentId = u64;
 
+/// Context in which a comment was created (which diff it refers to).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CommentContext {
+    /// Legacy comments created before context scoping existed.
+    Unscoped,
+    /// HEAD vs working tree.
+    Worktree,
+    /// Merge-base(base, HEAD) vs working tree.
+    Base { base: String },
+    /// Parent(commit) vs commit.
+    Commit { commit: String },
+    /// from..to comparison.
+    Range { from: String, to: String },
+}
+
+impl Default for CommentContext {
+    fn default() -> Self {
+        Self::Unscoped
+    }
+}
+
+impl CommentContext {
+    /// Whether this stored context should be considered relevant for the current view.
+    ///
+    /// `Unscoped` is treated as matching all contexts for backward compatibility.
+    pub fn matches(&self, current: &CommentContext) -> bool {
+        matches!(self, CommentContext::Unscoped) || self == current
+    }
+
+    fn is_unscoped(ctx: &CommentContext) -> bool {
+        matches!(ctx, CommentContext::Unscoped)
+    }
+}
+
 /// Status of a comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -20,6 +55,8 @@ pub enum CommentStatus {
 pub struct Comment {
     pub id: CommentId,
     pub path: RelPath,
+    #[serde(default, skip_serializing_if = "CommentContext::is_unscoped")]
+    pub context: CommentContext,
     pub message: String,
     pub status: CommentStatus,
     pub anchor: Anchor,
@@ -106,6 +143,25 @@ pub fn digest_hunk_changed_rows(diff: &DiffResult, hunk: &Hunk) -> String {
     format!("{:016x}", hash)
 }
 
+/// Format an anchor into a human-friendly single-line summary.
+pub fn format_anchor_summary(anchor: &Anchor) -> String {
+    anchor
+        .selectors
+        .iter()
+        .map(|s| match s {
+            Selector::DiffHunkV1(h) => format!(
+                "@@ -{},{} +{},{} @@ [{}]",
+                h.old_range.0 + 1,
+                h.old_range.1,
+                h.new_range.0 + 1,
+                h.new_range.1,
+                &h.digest_hex[..8]
+            ),
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +201,21 @@ mod tests {
 
         // No hunks
         assert!(selector_from_hunk(&diff, 0).is_none());
+    }
+
+    #[test]
+    fn context_unscoped_matches_all() {
+        assert!(CommentContext::Unscoped.matches(&CommentContext::Worktree));
+        assert!(CommentContext::Unscoped.matches(&CommentContext::Base {
+            base: "origin/main".to_string(),
+        }));
+    }
+
+    #[test]
+    fn context_scoped_matches_exact() {
+        assert!(CommentContext::Worktree.matches(&CommentContext::Worktree));
+        assert!(!CommentContext::Worktree.matches(&CommentContext::Base {
+            base: "origin/main".to_string(),
+        }));
     }
 }

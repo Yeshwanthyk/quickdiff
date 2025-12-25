@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::{Anchor, Comment, CommentId, CommentStatus, RelPath, RepoRoot};
+use crate::core::{Anchor, Comment, CommentContext, CommentId, CommentStatus, RelPath, RepoRoot};
 
 /// Persisted state schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,7 +35,13 @@ pub trait CommentStore {
     fn list_for_path(&self, path: &RelPath, include_resolved: bool) -> Vec<&Comment>;
 
     /// Add a new comment, returns the assigned ID.
-    fn add(&mut self, path: RelPath, message: String, anchor: Anchor) -> io::Result<CommentId>;
+    fn add(
+        &mut self,
+        path: RelPath,
+        context: CommentContext,
+        message: String,
+        anchor: Anchor,
+    ) -> io::Result<CommentId>;
 
     /// Resolve a comment by ID.
     fn resolve(&mut self, id: CommentId) -> io::Result<bool>;
@@ -114,13 +120,20 @@ impl CommentStore for FileCommentStore {
             .collect()
     }
 
-    fn add(&mut self, path: RelPath, message: String, anchor: Anchor) -> io::Result<CommentId> {
+    fn add(
+        &mut self,
+        path: RelPath,
+        context: CommentContext,
+        message: String,
+        anchor: Anchor,
+    ) -> io::Result<CommentId> {
         let id = self.state.next_id;
         self.state.next_id += 1;
 
         let comment = Comment {
             id,
             path,
+            context,
             message,
             status: CommentStatus::Open,
             anchor,
@@ -179,13 +192,20 @@ impl CommentStore for MemoryCommentStore {
             .collect()
     }
 
-    fn add(&mut self, path: RelPath, message: String, anchor: Anchor) -> io::Result<CommentId> {
+    fn add(
+        &mut self,
+        path: RelPath,
+        context: CommentContext,
+        message: String,
+        anchor: Anchor,
+    ) -> io::Result<CommentId> {
         let id = self.state.next_id;
         self.state.next_id += 1;
 
         let comment = Comment {
             id,
             path,
+            context,
             message,
             status: CommentStatus::Open,
             anchor,
@@ -233,6 +253,7 @@ mod tests {
         let id = store
             .add(
                 RelPath::new("src/main.rs"),
+                CommentContext::Worktree,
                 "Fix this".to_string(),
                 test_anchor(),
             )
@@ -241,6 +262,9 @@ mod tests {
         assert_eq!(id, 1);
         assert_eq!(store.list(false).len(), 1);
         assert_eq!(store.list(false)[0].message, "Fix this");
+        assert!(store.list(false)[0]
+            .context
+            .matches(&CommentContext::Worktree));
     }
 
     #[test]
@@ -248,7 +272,12 @@ mod tests {
         let mut store = MemoryCommentStore::new();
 
         let id = store
-            .add(RelPath::new("test.rs"), "TODO".to_string(), test_anchor())
+            .add(
+                RelPath::new("test.rs"),
+                CommentContext::Worktree,
+                "TODO".to_string(),
+                test_anchor(),
+            )
             .unwrap();
 
         assert_eq!(store.list(false).len(), 1);
@@ -288,6 +317,7 @@ mod tests {
             let id = store
                 .add(
                     RelPath::new("file.rs"),
+                    CommentContext::Worktree,
                     "Review this".to_string(),
                     test_anchor(),
                 )
@@ -305,6 +335,7 @@ mod tests {
             assert_eq!(state.next_id, 2);
             assert_eq!(state.comments.len(), 1);
             assert_eq!(state.comments[0].message, "Review this");
+            assert!(state.comments[0].context.matches(&CommentContext::Worktree));
         }
     }
 }

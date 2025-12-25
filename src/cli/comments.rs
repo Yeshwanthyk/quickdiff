@@ -3,8 +3,11 @@
 use std::process::ExitCode;
 
 use crate::core::{
-    load_head_content, load_working_content, selector_from_hunk, Anchor, CommentStore, DiffResult,
-    FileCommentStore, RelPath, RepoRoot, Selector, TextBuffer,
+    digest_hunk_changed_rows, format_anchor_summary, list_changed_files,
+    list_changed_files_between, list_changed_files_from_base_with_merge_base, list_commit_files,
+    load_diff_contents, resolve_revision, selector_from_hunk, Anchor, ChangedFile, CommentContext,
+    CommentStatus, CommentStore, DiffResult, DiffSource, FileCommentStore, RelPath, RepoError,
+    RepoRoot, Selector, TextBuffer,
 };
 
 /// Run a comments subcommand.
@@ -13,8 +16,8 @@ pub fn run_comments_command(repo: &RepoRoot, args: &[String]) -> ExitCode {
     if args.is_empty() {
         eprintln!("Usage: quickdiff comments <command>");
         eprintln!("Commands:");
-        eprintln!("  list [--all] [--json] [--path <path>]");
-        eprintln!("  add --path <path> --hunk <n> --message <text>");
+        eprintln!("  list [--all] [--json] [--path <path>] [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>]");
+        eprintln!("  add  [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>] --path <path> (--hunk <n>|--old-line <n>|--new-line <n>) --message <text>");
         eprintln!("  resolve <id>");
         return ExitCode::from(1);
     }
@@ -30,6 +33,144 @@ pub fn run_comments_command(repo: &RepoRoot, args: &[String]) -> ExitCode {
             eprintln!("Unknown command: {}", cmd);
             ExitCode::from(1)
         }
+    }
+}
+
+fn parse_context(
+    repo: &RepoRoot,
+    args: &[String],
+) -> Result<Option<(CommentContext, DiffSource)>, String> {
+    let mut worktree = false;
+    let mut base: Option<String> = None;
+    let mut commit: Option<String> = None;
+    let mut range: Option<String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--worktree" => {
+                worktree = true;
+            }
+            "--base" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--base requires a value".to_string());
+                }
+                base = Some(args[i].clone());
+            }
+            "--commit" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--commit requires a value".to_string());
+                }
+                commit = Some(args[i].clone());
+            }
+            "--range" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--range requires a value".to_string());
+                }
+                range = Some(args[i].clone());
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let set_count =
+        worktree as u8 + base.is_some() as u8 + commit.is_some() as u8 + range.is_some() as u8;
+    if set_count == 0 {
+        return Ok(None);
+    }
+    if set_count > 1 {
+        return Err("Only one of --worktree/--base/--commit/--range may be specified".to_string());
+    }
+
+    if worktree {
+        return Ok(Some((CommentContext::Worktree, DiffSource::WorkingTree)));
+    }
+
+    if let Some(base) = base {
+        return Ok(Some((
+            CommentContext::Base { base: base.clone() },
+            DiffSource::Base(base),
+        )));
+    }
+
+    if let Some(commit) = commit {
+        let sha = resolve_revision(repo, &commit)
+            .map_err(|e| format!("Failed to resolve commit {}: {}", commit, e))?;
+        return Ok(Some((
+            CommentContext::Commit {
+                commit: sha.clone(),
+            },
+            DiffSource::Commit(sha),
+        )));
+    }
+
+    if let Some(range) = range {
+        let (from, to) = parse_range(&range)?;
+        let from_sha = resolve_revision(repo, &from)
+            .map_err(|e| format!("Failed to resolve revision {}: {}", from, e))?;
+        let to_sha = resolve_revision(repo, &to)
+            .map_err(|e| format!("Failed to resolve revision {}: {}", to, e))?;
+        return Ok(Some((
+            CommentContext::Range {
+                from: from_sha.clone(),
+                to: to_sha.clone(),
+            },
+            DiffSource::Range {
+                from: from_sha,
+                to: to_sha,
+            },
+        )));
+    }
+
+    Ok(None)
+}
+
+fn parse_range(s: &str) -> Result<(String, String), String> {
+    let Some(idx) = s.find("..") else {
+        return Err("--range must contain '..' (e.g. a..b)".to_string());
+    };
+
+    let from = &s[..idx];
+    let to = &s[idx + 2..];
+
+    let to = to.strip_prefix('.').unwrap_or(to);
+
+    let from = if from.is_empty() { "HEAD" } else { from };
+    let to = if to.is_empty() { "HEAD" } else { to };
+
+    Ok((from.to_string(), to.to_string()))
+}
+
+fn list_files_for_source(
+    repo: &RepoRoot,
+    source: &DiffSource,
+) -> Result<(Vec<ChangedFile>, Option<String>), RepoError> {
+    match source {
+        DiffSource::WorkingTree => Ok((list_changed_files(repo)?, None)),
+        DiffSource::Commit(commit) => Ok((list_commit_files(repo, commit)?, None)),
+        DiffSource::Range { from, to } => Ok((list_changed_files_between(repo, from, to)?, None)),
+        DiffSource::Base(base) => {
+            let result = list_changed_files_from_base_with_merge_base(repo, base)?;
+            Ok((result.files, Some(result.merge_base)))
+        }
+    }
+}
+
+fn context_summary(ctx: &CommentContext) -> String {
+    match ctx {
+        CommentContext::Unscoped => "any".to_string(),
+        CommentContext::Worktree => "worktree".to_string(),
+        CommentContext::Base { base } => format!("base:{}", base),
+        CommentContext::Commit { commit } => format!("commit:{}", &commit[..7.min(commit.len())]),
+        CommentContext::Range { from, to } => format!(
+            "range:{}..{}",
+            &from[..7.min(from.len())],
+            &to[..7.min(to.len())]
+        ),
     }
 }
 
@@ -52,13 +193,18 @@ fn cmd_list(repo: &RepoRoot, args: &[String]) -> ExitCode {
                 }
                 filter_path = Some(args[i].clone());
             }
-            _ => {
-                eprintln!("Unknown option: {}", args[i]);
-                return ExitCode::from(1);
-            }
+            _ => {}
         }
         i += 1;
     }
+
+    let context_filter = match parse_context(repo, args) {
+        Ok(v) => v.map(|(ctx, _src)| ctx),
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::from(1);
+        }
+    };
 
     let store = match FileCommentStore::open(repo) {
         Ok(s) => s,
@@ -68,24 +214,32 @@ fn cmd_list(repo: &RepoRoot, args: &[String]) -> ExitCode {
         }
     };
 
-    let comments = if let Some(ref path) = filter_path {
+    let mut comments: Vec<_> = if let Some(ref path) = filter_path {
         let rel_path = RelPath::new(path.clone());
         store.list_for_path(&rel_path, include_resolved)
     } else {
         store.list(include_resolved)
     };
 
+    if let Some(ctx) = context_filter {
+        comments.retain(|c| c.context.matches(&ctx));
+    }
+
     if json_output {
-        // Output as JSON array
         let json_comments: Vec<_> = comments
             .iter()
             .map(|c| {
                 serde_json::json!({
                     "id": c.id,
                     "path": c.path.as_str(),
-                    "status": format!("{:?}", c.status).to_lowercase(),
-                    "message": c.message,
-                    "anchor": format_anchor_summary(&c.anchor),
+                    "context": &c.context,
+                    "context_summary": context_summary(&c.context),
+                    "status": c.status,
+                    "message": &c.message,
+                    "anchor": &c.anchor,
+                    "anchor_summary": format_anchor_summary(&c.anchor),
+                    "created_at_ms": c.created_at_ms,
+                    "resolved_at_ms": c.resolved_at_ms,
                 })
             })
             .collect();
@@ -101,16 +255,17 @@ fn cmd_list(repo: &RepoRoot, args: &[String]) -> ExitCode {
         println!("No comments found");
     } else {
         for c in comments {
-            let status = if c.status == crate::core::CommentStatus::Open {
+            let status = if c.status == CommentStatus::Open {
                 "OPEN"
             } else {
                 "RESOLVED"
             };
             println!(
-                "[{}] {} ({}) - {}",
+                "[{}] {} ({}, {}) - {}",
                 c.id,
                 c.path.as_str(),
                 status,
+                context_summary(&c.context),
                 c.message
             );
             println!("    {}", format_anchor_summary(&c.anchor));
@@ -120,11 +275,27 @@ fn cmd_list(repo: &RepoRoot, args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[derive(Debug, Clone, Copy)]
+enum HunkSelectorArg {
+    Index(usize),
+    OldLine(usize),
+    NewLine(usize),
+}
+
 /// Add a comment.
 fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
     let mut path: Option<String> = None;
-    let mut hunk_num: Option<usize> = None;
+    let mut selector: Option<HunkSelectorArg> = None;
     let mut message: Option<String> = None;
+
+    let (context, source) = match parse_context(repo, args) {
+        Ok(Some(v)) => v,
+        Ok(None) => (CommentContext::Worktree, DiffSource::WorkingTree),
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::from(1);
+        }
+    };
 
     let mut i = 0;
     while i < args.len() {
@@ -143,13 +314,44 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
                     eprintln!("--hunk requires a value");
                     return ExitCode::from(1);
                 }
-                match args[i].parse::<usize>() {
-                    Ok(n) if n >= 1 => hunk_num = Some(n),
+                let n = match args[i].parse::<usize>() {
+                    Ok(n) if n >= 1 => n,
                     _ => {
                         eprintln!("--hunk must be a positive integer");
                         return ExitCode::from(1);
                     }
+                };
+                selector = Some(HunkSelectorArg::Index(n - 1));
+            }
+            "--old-line" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("--old-line requires a value");
+                    return ExitCode::from(1);
                 }
+                let n = match args[i].parse::<usize>() {
+                    Ok(n) if n >= 1 => n,
+                    _ => {
+                        eprintln!("--old-line must be a positive integer");
+                        return ExitCode::from(1);
+                    }
+                };
+                selector = Some(HunkSelectorArg::OldLine(n - 1));
+            }
+            "--new-line" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("--new-line requires a value");
+                    return ExitCode::from(1);
+                }
+                let n = match args[i].parse::<usize>() {
+                    Ok(n) if n >= 1 => n,
+                    _ => {
+                        eprintln!("--new-line must be a positive integer");
+                        return ExitCode::from(1);
+                    }
+                };
+                selector = Some(HunkSelectorArg::NewLine(n - 1));
             }
             "--message" | "-m" => {
                 i += 1;
@@ -159,10 +361,7 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
                 }
                 message = Some(args[i].clone());
             }
-            _ => {
-                eprintln!("Unknown option: {}", args[i]);
-                return ExitCode::from(1);
-            }
+            _ => {}
         }
         i += 1;
     }
@@ -172,8 +371,8 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     };
 
-    let Some(hunk_num) = hunk_num else {
-        eprintln!("--hunk is required");
+    let Some(selector_arg) = selector else {
+        eprintln!("One of --hunk/--old-line/--new-line is required");
         return ExitCode::from(1);
     };
 
@@ -184,52 +383,86 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
 
     let rel_path = RelPath::new(path);
 
-    // Load content and compute diff
-    let old_bytes = match load_head_content(repo, &rel_path) {
-        Ok(b) => b,
+    let (files, merge_base) = match list_files_for_source(repo, &source) {
+        Ok(v) => v,
         Err(e) => {
-            eprintln!("Failed to load HEAD content: {}", e);
+            eprintln!("Failed to list files for source: {}", e);
             return ExitCode::from(1);
         }
     };
 
-    let new_bytes = match load_working_content(repo, &rel_path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("Failed to load working content: {}", e);
-            return ExitCode::from(1);
-        }
+    let Some(file) = files.into_iter().find(|f| f.path == rel_path) else {
+        eprintln!(
+            "Path {} is not part of the current changeset ({})",
+            rel_path.as_str(),
+            context_summary(&context)
+        );
+        return ExitCode::from(1);
     };
+
+    let (old_bytes, new_bytes) =
+        match load_diff_contents(repo, &source, &file, merge_base.as_deref()) {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!("Failed to load diff content: {}", e);
+                return ExitCode::from(1);
+            }
+        };
 
     let old_buffer = TextBuffer::new(&old_bytes);
     let new_buffer = TextBuffer::new(&new_bytes);
     let diff = DiffResult::compute(&old_buffer, &new_buffer);
 
-    // Check hunk exists (1-indexed)
-    let hunk_idx = hunk_num - 1;
-    if hunk_idx >= diff.hunks.len() {
-        eprintln!(
-            "Hunk {} does not exist (file has {} hunks)",
-            hunk_num,
-            diff.hunks.len()
-        );
+    if diff.hunks.is_empty() {
+        eprintln!("No hunks found for {}", rel_path.as_str());
         return ExitCode::from(1);
     }
 
-    // Build selector
-    let selector = match selector_from_hunk(&diff, hunk_idx) {
-        Some(s) => s,
-        None => {
-            eprintln!("Failed to create selector for hunk");
-            return ExitCode::from(1);
+    let hunk_idx = match selector_arg {
+        HunkSelectorArg::Index(idx) => {
+            if idx >= diff.hunks.len() {
+                eprintln!(
+                    "Hunk {} does not exist (file has {} hunks)",
+                    idx + 1,
+                    diff.hunks.len()
+                );
+                return ExitCode::from(1);
+            }
+            idx
         }
+        HunkSelectorArg::OldLine(old_line) => match diff
+            .hunks
+            .iter()
+            .position(|h| old_line >= h.old_range.0 && old_line < h.old_range.0 + h.old_range.1)
+        {
+            Some(idx) => idx,
+            None => {
+                eprintln!("No hunk matches --old-line {}", old_line + 1);
+                return ExitCode::from(1);
+            }
+        },
+        HunkSelectorArg::NewLine(new_line) => match diff
+            .hunks
+            .iter()
+            .position(|h| new_line >= h.new_range.0 && new_line < h.new_range.0 + h.new_range.1)
+        {
+            Some(idx) => idx,
+            None => {
+                eprintln!("No hunk matches --new-line {}", new_line + 1);
+                return ExitCode::from(1);
+            }
+        },
+    };
+
+    let Some(hunk_selector) = selector_from_hunk(&diff, hunk_idx) else {
+        eprintln!("Failed to create selector for hunk");
+        return ExitCode::from(1);
     };
 
     let anchor = Anchor {
-        selectors: vec![Selector::DiffHunkV1(selector)],
+        selectors: vec![Selector::DiffHunkV1(hunk_selector)],
     };
 
-    // Add comment
     let mut store = match FileCommentStore::open(repo) {
         Ok(s) => s,
         Err(e) => {
@@ -238,9 +471,15 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
         }
     };
 
-    match store.add(rel_path, message, anchor) {
+    match store.add(rel_path, context, message, anchor) {
         Ok(id) => {
-            println!("Created comment {}", id);
+            let digest_prefix = diff
+                .hunks
+                .get(hunk_idx)
+                .map(|h| digest_hunk_changed_rows(&diff, h))
+                .map(|d| d[..8].to_string())
+                .unwrap_or_else(|| "????????".to_string());
+            println!("Created comment {} [{}]", id, digest_prefix);
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -287,25 +526,4 @@ fn cmd_resolve(repo: &RepoRoot, args: &[String]) -> ExitCode {
             ExitCode::from(1)
         }
     }
-}
-
-/// Format anchor summary for display.
-fn format_anchor_summary(anchor: &Anchor) -> String {
-    anchor
-        .selectors
-        .iter()
-        .map(|s| match s {
-            Selector::DiffHunkV1(h) => {
-                format!(
-                    "@@ -{},{} +{},{} @@ [{}]",
-                    h.old_range.0 + 1,
-                    h.old_range.1,
-                    h.new_range.0 + 1,
-                    h.new_range.1,
-                    &h.digest_hex[..8]
-                )
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("; ")
 }
