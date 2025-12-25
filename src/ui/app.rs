@@ -29,6 +29,7 @@ pub enum Mode {
     AddComment,
     ViewComments,
     FilterFiles,
+    SelectTheme,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +125,12 @@ pub struct App {
     // Theme
     /// Current color theme.
     pub theme: Theme,
+    /// Available theme names for selector.
+    pub theme_list: Vec<String>,
+    /// Selected index in theme selector.
+    pub theme_selector_idx: usize,
+    /// Original theme name (for cancel).
+    pub theme_original: String,
 }
 
 fn comment_context_for_source(source: &DiffSource) -> CommentContext {
@@ -240,6 +247,9 @@ impl App {
             highlighter: HighlighterCache::new(),
             current_lang: LanguageId::Plain,
             theme,
+            theme_list: Theme::list(),
+            theme_selector_idx: 0,
+            theme_original: theme_name.unwrap_or("default").to_string(),
         };
 
         // Restore last selected file if available (only for working tree mode)
@@ -953,5 +963,58 @@ impl App {
     /// Check if a file index is visible (passes filter).
     pub fn is_file_visible(&self, idx: usize) -> bool {
         self.filtered_indices.is_empty() || self.filtered_indices.contains(&idx)
+    }
+
+    // ========================================================================
+    // Theme selector
+    // ========================================================================
+
+    /// Open theme selector.
+    pub fn open_theme_selector(&mut self) {
+        self.theme_list = Theme::list();
+        // Find current theme in list
+        let current = self
+            .theme_list
+            .iter()
+            .position(|t| t == &self.theme_original)
+            .unwrap_or(0);
+        self.theme_selector_idx = current;
+        self.mode = Mode::SelectTheme;
+        self.dirty = true;
+    }
+
+    /// Close theme selector without applying.
+    pub fn close_theme_selector(&mut self) {
+        // Restore original theme
+        self.theme = Theme::load(&self.theme_original);
+        self.mode = Mode::Normal;
+        self.dirty = true;
+    }
+
+    /// Move selection up in theme list.
+    pub fn theme_select_prev(&mut self) {
+        if self.theme_selector_idx > 0 {
+            self.theme_selector_idx -= 1;
+            // Live preview
+            self.theme = Theme::load(&self.theme_list[self.theme_selector_idx]);
+            self.dirty = true;
+        }
+    }
+
+    /// Move selection down in theme list.
+    pub fn theme_select_next(&mut self) {
+        if self.theme_selector_idx + 1 < self.theme_list.len() {
+            self.theme_selector_idx += 1;
+            // Live preview
+            self.theme = Theme::load(&self.theme_list[self.theme_selector_idx]);
+            self.dirty = true;
+        }
+    }
+
+    /// Apply selected theme and close selector.
+    pub fn theme_apply(&mut self) {
+        self.theme_original = self.theme_list[self.theme_selector_idx].clone();
+        self.mode = Mode::Normal;
+        self.dirty = true;
     }
 }

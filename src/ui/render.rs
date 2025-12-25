@@ -76,6 +76,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::ViewComments {
         render_comments_overlay(frame, app);
     }
+
+    // Overlay for theme selector
+    if app.mode == Mode::SelectTheme {
+        render_theme_selector(frame, app);
+    }
 }
 
 // ============================================================================
@@ -871,6 +876,93 @@ fn render_comments_overlay(frame: &mut Frame, app: &App) {
 }
 
 // ============================================================================
+// Theme Selector
+// ============================================================================
+
+fn render_theme_selector(frame: &mut Frame, app: &App) {
+    use ratatui::widgets::Clear;
+
+    let area = frame.area();
+
+    // Size the overlay
+    let width = 30.min(area.width.saturating_sub(4));
+    let height = (app.theme_list.len() as u16 + 2).min(area.height.saturating_sub(4));
+
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let overlay_area = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, overlay_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.accent))
+        .title(Span::styled(
+            " Theme ",
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.bg_elevated));
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let visible_height = inner.height as usize;
+    if visible_height == 0 {
+        return;
+    }
+
+    // Scroll to keep selection visible
+    let scroll = app
+        .theme_selector_idx
+        .saturating_sub(visible_height.saturating_sub(1));
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, theme_name) in app
+        .theme_list
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_height)
+    {
+        let is_selected = i == app.theme_selector_idx;
+        let row_bg = if is_selected {
+            app.theme.bg_selected
+        } else {
+            app.theme.bg_elevated
+        };
+        let text_color = if is_selected {
+            app.theme.text_bright
+        } else {
+            app.theme.text_normal
+        };
+
+        let indicator = if is_selected { "▌" } else { " " };
+
+        lines.push(Line::from(vec![
+            Span::styled(indicator, Style::default().fg(app.theme.accent).bg(row_bg)),
+            Span::styled(
+                format!(" {}", theme_name),
+                Style::default().fg(text_color).bg(row_bg),
+            ),
+        ]));
+    }
+
+    // Pad remaining lines
+    while lines.len() < visible_height {
+        lines.push(Line::from(Span::styled(
+            "",
+            Style::default().bg(app.theme.bg_elevated),
+        )));
+    }
+
+    let para = Paragraph::new(lines).style(Style::default().bg(app.theme.bg_elevated));
+    frame.render_widget(para, inner);
+}
+
+// ============================================================================
 // Bottom Bar
 // ============================================================================
 
@@ -932,6 +1024,27 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled(
                 "  Enter: apply  Esc: cancel",
+                Style::default()
+                    .fg(app.theme.text_muted)
+                    .bg(app.theme.bg_elevated),
+            ),
+        ]);
+        let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_elevated));
+        frame.render_widget(para, area);
+        return;
+    }
+
+    // Theme selector mode
+    if app.mode == Mode::SelectTheme {
+        let line = Line::from(vec![
+            Span::styled(
+                " Theme ",
+                Style::default()
+                    .fg(app.theme.accent)
+                    .bg(app.theme.bg_elevated),
+            ),
+            Span::styled(
+                " j/k: move  Enter: apply  Esc: cancel",
                 Style::default()
                     .fg(app.theme.text_muted)
                     .bg(app.theme.bg_elevated),

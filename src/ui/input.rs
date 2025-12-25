@@ -20,6 +20,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         Mode::AddComment => return handle_add_comment_key(app, key),
         Mode::ViewComments => return handle_view_comments_key(app, key),
         Mode::FilterFiles => return handle_filter_key(app, key),
+        Mode::SelectTheme => return handle_theme_selector_key(app, key),
         Mode::Normal => {}
     }
 
@@ -47,6 +48,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char(' ') => {
             app.toggle_viewed();
+            return true;
+        }
+        KeyCode::Char('T') => {
+            app.open_theme_selector();
             return true;
         }
         _ => {}
@@ -223,5 +228,28 @@ fn handle_filter_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+/// Handle keys when theme selector is open.
+fn handle_theme_selector_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('T') => {
+            app.close_theme_selector();
+            true
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.theme_select_next();
+            true
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.theme_select_prev();
+            true
+        }
+        KeyCode::Enter => {
+            app.theme_apply();
+            true
+        }
+        _ => true, // consume all keys in overlay
     }
 }

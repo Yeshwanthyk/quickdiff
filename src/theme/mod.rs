@@ -590,8 +590,6 @@ impl Theme {
     }
 }
 
-
-
 /// Get user themes directory (~/.config/quickdiff/themes/).
 fn user_themes_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("quickdiff").join("themes"))
