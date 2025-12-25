@@ -257,7 +257,7 @@ impl ChangedFile {
 #[must_use = "this returns a Result that should be checked"]
 pub fn list_changed_files(root: &RepoRoot) -> Result<Vec<ChangedFile>, RepoError> {
     let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "-z"])
+        .args(["status", "--porcelain=v1", "-z", "-uall"])
         .current_dir(root.path())
         .output()?;
 
@@ -309,6 +309,7 @@ fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
             _ => FileChangeKind::Modified, // fallback
         };
 
+        // Skip .quickdiff/ internal files
         if path.starts_with(".quickdiff/") {
             continue;
         }
