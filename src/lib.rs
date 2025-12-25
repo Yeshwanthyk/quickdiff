@@ -3,4 +3,5 @@
 pub mod cli;
 pub mod core;
 pub mod highlight;
+pub mod theme;
 pub mod ui;

@@ -37,6 +37,10 @@ struct Cli {
     #[arg(short = 'f', long = "file", value_name = "PATH")]
     file: Option<String>,
 
+    /// Color theme (default, dracula, catppuccin, nord, gruvbox, tokyonight, rosepine, onedark, solarized)
+    #[arg(short = 't', long = "theme", value_name = "THEME")]
+    theme: Option<String>,
+
     /// Comments subcommand
     #[arg(trailing_var_arg = true, hide = true)]
     rest: Vec<String>,
@@ -75,7 +79,7 @@ fn main() -> ExitCode {
     let source = parse_diff_source(&cli);
 
     // Run TUI
-    match run_tui(source, cli.file) {
+    match run_tui(source, cli.file, cli.theme) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -155,7 +159,7 @@ fn run_cli_comments(args: &[String]) -> ExitCode {
 }
 
 /// Run the TUI application.
-fn run_tui(source: DiffSource, file_filter: Option<String>) -> Result<()> {
+fn run_tui(source: DiffSource, file_filter: Option<String>, theme: Option<String>) -> Result<()> {
     // Set panic hook to ensure terminal cleanup
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
@@ -181,7 +185,7 @@ fn run_tui(source: DiffSource, file_filter: Option<String>) -> Result<()> {
     };
 
     // Create app with diff source and file filter
-    let mut app = App::new(repo, source, file_filter)?;
+    let mut app = App::new(repo, source, file_filter, theme.as_deref())?;
 
     // Check for empty changeset
     if app.files.is_empty() {

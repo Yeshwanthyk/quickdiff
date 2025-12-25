@@ -10,6 +10,7 @@ use crate::core::{
     Selector, TextBuffer, ViewedStore,
 };
 use crate::highlight::{HighlighterCache, LanguageId};
+use crate::theme::Theme;
 
 use super::worker::{spawn_diff_worker, DiffLoadRequest, DiffLoadResponse, DiffWorker};
 
@@ -119,6 +120,10 @@ pub struct App {
     pub highlighter: HighlighterCache,
     /// Current file's language.
     pub current_lang: LanguageId,
+
+    // Theme
+    /// Current color theme.
+    pub theme: Theme,
 }
 
 fn comment_context_for_source(source: &DiffSource) -> CommentContext {
@@ -156,7 +161,9 @@ impl App {
         repo: RepoRoot,
         source: DiffSource,
         file_filter: Option<String>,
+        theme_name: Option<&str>,
     ) -> anyhow::Result<Self> {
+        let theme = Theme::load(theme_name.unwrap_or("default"));
         // Canonicalize commit/range sources so comment contexts match across invocations.
         let source = match source {
             DiffSource::Commit(commit) => {
@@ -232,6 +239,7 @@ impl App {
             dirty: true,
             highlighter: HighlighterCache::new(),
             current_lang: LanguageId::Plain,
+            theme,
         };
 
         // Restore last selected file if available (only for working tree mode)
@@ -904,8 +912,7 @@ impl App {
                 .collect();
         }
         // Reset selection to first match if current selection is filtered out
-        if !self.filtered_indices.is_empty()
-            && !self.filtered_indices.contains(&self.selected_idx)
+        if !self.filtered_indices.is_empty() && !self.filtered_indices.contains(&self.selected_idx)
         {
             self.selected_idx = self.filtered_indices[0];
             self.request_current_diff();

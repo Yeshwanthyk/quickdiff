@@ -1,6 +1,6 @@
 //! UI rendering with ratatui.
 //!
-//! Design: Refined dark theme with editorial minimalism.
+//! Design: Themeable dark UI with editorial minimalism.
 //! - Muted UI chrome lets syntax highlighting pop
 //! - Subtle diff backgrounds don't compete with code colors
 //! - Single accent color for focus states
@@ -15,70 +15,9 @@ use ratatui::{
 
 use crate::core::{ChangeKind, CommentStatus, FileChangeKind, ViewedStore};
 use crate::highlight::StyleId;
+use crate::theme::Theme;
 
 use super::app::{App, Focus, Mode};
-
-// ============================================================================
-// Color Palette
-// ============================================================================
-
-mod palette {
-    use ratatui::style::Color;
-
-    // Base grays (dark to light) - refined for hierarchy
-    pub const BG_DARK: Color = Color::Rgb(18, 18, 22); // Deep black
-    pub const BG_SURFACE: Color = Color::Rgb(26, 26, 32); // Panels
-    pub const BG_ELEVATED: Color = Color::Rgb(36, 36, 44); // Headers, overlays
-    pub const BG_SELECTED: Color = Color::Rgb(45, 45, 55); // Selected items
-
-    // Borders & separators (very subtle)
-    pub const BORDER_DIM: Color = Color::Rgb(50, 50, 60); // Unfocused borders
-    pub const GUTTER_SEP: Color = Color::Rgb(38, 38, 46); // Nearly invisible gutter
-    pub const PANE_DIVIDER: Color = Color::Rgb(55, 55, 65); // Between old/new panes
-
-    // Text hierarchy (critical for glanceability)
-    pub const TEXT_FAINT: Color = Color::Rgb(55, 55, 65); // Line numbers, minimal
-    pub const TEXT_MUTED: Color = Color::Rgb(80, 80, 92); // Secondary info
-    pub const TEXT_DIM: Color = Color::Rgb(110, 110, 125); // Tertiary
-    pub const TEXT_NORMAL: Color = Color::Rgb(175, 175, 185); // Primary text
-    pub const TEXT_BRIGHT: Color = Color::Rgb(230, 230, 235); // Emphasized
-
-    // Accent (teal/cyan family)
-    pub const ACCENT: Color = Color::Rgb(80, 200, 200); // Focus, interactive
-    pub const ACCENT_DIM: Color = Color::Rgb(55, 130, 130); // Subtle accent
-
-    // Diff backgrounds (subtle tints, preserves syntax colors)
-    pub const DIFF_DELETE_BG: Color = Color::Rgb(45, 25, 30); // Soft red tint
-    pub const DIFF_INSERT_BG: Color = Color::Rgb(25, 45, 32); // Soft green tint
-    pub const DIFF_EMPTY_BG: Color = Color::Rgb(22, 22, 26); // Missing line placeholder
-
-    // Inline diff highlights (brighter, for word-level changes)
-    pub const INLINE_DELETE_BG: Color = Color::Rgb(90, 40, 50); // Brighter red for changed words
-    pub const INLINE_INSERT_BG: Color = Color::Rgb(40, 90, 55); // Brighter green for changed words
-
-    // Status colors (slightly muted for polish)
-    pub const SUCCESS: Color = Color::Rgb(85, 185, 105);
-    pub const ERROR: Color = Color::Rgb(215, 85, 85);
-    pub const WARNING: Color = Color::Rgb(215, 175, 80);
-
-    // Syntax highlighting (vibrant - these are the stars)
-    pub const SYN_KEYWORD: Color = Color::Rgb(198, 120, 221); // Purple
-    pub const SYN_TYPE: Color = Color::Rgb(229, 192, 123); // Gold
-    pub const SYN_FUNCTION: Color = Color::Rgb(97, 175, 239); // Blue
-    pub const SYN_STRING: Color = Color::Rgb(152, 195, 121); // Green
-    pub const SYN_NUMBER: Color = Color::Rgb(209, 154, 102); // Orange
-    pub const SYN_COMMENT: Color = Color::Rgb(92, 99, 112); // Gray (intentionally dim)
-    pub const SYN_OPERATOR: Color = Color::Rgb(171, 178, 191); // Light gray
-    pub const SYN_PUNCTUATION: Color = Color::Rgb(120, 120, 135); // Subtle but visible
-    pub const SYN_CONSTANT: Color = Color::Rgb(86, 182, 194); // Cyan
-    pub const SYN_PROPERTY: Color = Color::Rgb(224, 108, 117); // Red
-    pub const SYN_ATTRIBUTE: Color = Color::Rgb(229, 192, 123); // Gold
-
-    // Sidebar indicators
-    pub const INDICATOR_SELECTED: Color = Color::Rgb(80, 200, 200); // Selection bar
-}
-
-use palette::*;
 
 // ============================================================================
 // Constants
@@ -91,22 +30,22 @@ const SIDEBAR_PATH_WIDTH: usize = 22;
 // Syntax Highlighting
 // ============================================================================
 
-/// Map StyleId to syntax color.
-fn style_to_color(style: StyleId) -> Color {
+/// Map StyleId to syntax color using theme.
+fn style_to_color(style: StyleId, theme: &Theme) -> Color {
     match style {
-        StyleId::Default => TEXT_NORMAL,
-        StyleId::Keyword => SYN_KEYWORD,
-        StyleId::Type => SYN_TYPE,
-        StyleId::Function => SYN_FUNCTION,
-        StyleId::String => SYN_STRING,
-        StyleId::Number => SYN_NUMBER,
-        StyleId::Comment => SYN_COMMENT,
-        StyleId::Operator => SYN_OPERATOR,
-        StyleId::Punctuation => SYN_PUNCTUATION,
-        StyleId::Variable => TEXT_NORMAL,
-        StyleId::Constant => SYN_CONSTANT,
-        StyleId::Property => SYN_PROPERTY,
-        StyleId::Attribute => SYN_ATTRIBUTE,
+        StyleId::Default => theme.text_normal,
+        StyleId::Keyword => theme.syn_keyword,
+        StyleId::Type => theme.syn_type,
+        StyleId::Function => theme.syn_function,
+        StyleId::String => theme.syn_string,
+        StyleId::Number => theme.syn_number,
+        StyleId::Comment => theme.syn_comment,
+        StyleId::Operator => theme.syn_operator,
+        StyleId::Punctuation => theme.syn_punctuation,
+        StyleId::Variable => theme.text_normal,
+        StyleId::Constant => theme.syn_constant,
+        StyleId::Property => theme.syn_property,
+        StyleId::Attribute => theme.syn_attribute,
     }
 }
 
@@ -117,7 +56,7 @@ fn style_to_color(style: StyleId) -> Color {
 /// Main render function.
 pub fn render(frame: &mut Frame, app: &mut App) {
     // Fill background
-    let bg_block = Block::default().style(Style::default().bg(BG_DARK));
+    let bg_block = Block::default().style(Style::default().bg(app.theme.bg_dark));
     frame.render_widget(bg_block, frame.area());
 
     let chunks = Layout::default()
@@ -149,14 +88,17 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     // Get file change kind for indicator
     let kind_indicator = file.map(|f| match f.kind {
-        FileChangeKind::Added => ("A", SUCCESS),
-        FileChangeKind::Modified => ("M", WARNING),
-        FileChangeKind::Deleted => ("D", ERROR),
-        FileChangeKind::Untracked => ("?", TEXT_MUTED),
-        FileChangeKind::Renamed => ("R", ACCENT_DIM),
+        FileChangeKind::Added => ("A", app.theme.success),
+        FileChangeKind::Modified => ("M", app.theme.warning),
+        FileChangeKind::Deleted => ("D", app.theme.error),
+        FileChangeKind::Untracked => ("?", app.theme.text_muted),
+        FileChangeKind::Renamed => ("R", app.theme.accent_dim),
     });
 
-    let mut spans = vec![Span::styled("  ", Style::default().bg(BG_ELEVATED))];
+    let mut spans = vec![Span::styled(
+        "  ",
+        Style::default().bg(app.theme.bg_elevated),
+    )];
 
     // Change kind badge
     if let Some((kind, color)) = kind_indicator {
@@ -164,32 +106,39 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
             kind,
             Style::default()
                 .fg(color)
-                .bg(BG_ELEVATED)
+                .bg(app.theme.bg_elevated)
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled("  ", Style::default().bg(BG_ELEVATED)));
+        spans.push(Span::styled(
+            "  ",
+            Style::default().bg(app.theme.bg_elevated),
+        ));
     }
 
     // Filename (prominent)
     spans.push(Span::styled(
         file_name,
         Style::default()
-            .fg(TEXT_BRIGHT)
-            .bg(BG_ELEVATED)
+            .fg(app.theme.text_bright)
+            .bg(app.theme.bg_elevated)
             .add_modifier(Modifier::BOLD),
     ));
 
     if app.is_current_viewed() {
         spans.push(Span::styled(
             "  ✓ viewed",
-            Style::default().fg(SUCCESS).bg(BG_ELEVATED),
+            Style::default()
+                .fg(app.theme.success)
+                .bg(app.theme.bg_elevated),
         ));
     }
 
     if app.is_binary {
         spans.push(Span::styled(
             "  [binary]",
-            Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
+            Style::default()
+                .fg(app.theme.text_muted)
+                .bg(app.theme.bg_elevated),
         ));
     }
 
@@ -199,7 +148,9 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
             if *count > 0 {
                 spans.push(Span::styled(
                     format!("  {} comments", count),
-                    Style::default().fg(ACCENT).bg(BG_ELEVATED),
+                    Style::default()
+                        .fg(app.theme.accent)
+                        .bg(app.theme.bg_elevated),
                 ));
             }
         }
@@ -208,7 +159,10 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Pad to fill width
     let content_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let padding = " ".repeat(area.width as usize - content_len.min(area.width as usize));
-    spans.push(Span::styled(padding, Style::default().bg(BG_ELEVATED)));
+    spans.push(Span::styled(
+        padding,
+        Style::default().bg(app.theme.bg_elevated),
+    ));
 
     let line = Line::from(spans);
     let para = Paragraph::new(line);
@@ -239,11 +193,15 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let is_focused = app.focus == Focus::Sidebar;
 
-    let border_color = if is_focused { ACCENT } else { BORDER_DIM };
-    let title_style = if is_focused {
-        Style::default().fg(ACCENT)
+    let border_color = if is_focused {
+        app.theme.accent
     } else {
-        Style::default().fg(TEXT_MUTED)
+        app.theme.border_dim
+    };
+    let title_style = if is_focused {
+        Style::default().fg(app.theme.accent)
+    } else {
+        Style::default().fg(app.theme.text_muted)
     };
 
     // Show filter indicator in title if active
@@ -261,7 +219,7 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(title, title_style))
-        .style(Style::default().bg(BG_SURFACE));
+        .style(Style::default().bg(app.theme.bg_surface));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -284,7 +242,11 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             "No matches"
         };
-        let para = Paragraph::new(msg).style(Style::default().fg(TEXT_MUTED).bg(BG_SURFACE));
+        let para = Paragraph::new(msg).style(
+            Style::default()
+                .fg(app.theme.text_muted)
+                .bg(app.theme.bg_surface),
+        );
         frame.render_widget(para, inner);
         return;
     }
@@ -317,13 +279,17 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         let is_selected = idx == app.selected_idx;
         let is_viewed = app.viewed.is_viewed(&file.path);
 
-        let row_bg = if is_selected { BG_SELECTED } else { BG_SURFACE };
+        let row_bg = if is_selected {
+            app.theme.bg_selected
+        } else {
+            app.theme.bg_surface
+        };
 
         // Selection indicator (left edge)
         let select_indicator = if is_selected { "▌" } else { " " };
         let select_style = Style::default()
             .fg(if is_selected {
-                INDICATOR_SELECTED
+                app.theme.accent
             } else {
                 row_bg
             })
@@ -331,15 +297,19 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
 
         // Change kind indicator with color
         let (kind_char, kind_color) = match file.kind {
-            FileChangeKind::Added => ('A', SUCCESS),
-            FileChangeKind::Modified => ('M', WARNING),
-            FileChangeKind::Deleted => ('D', ERROR),
-            FileChangeKind::Untracked => ('?', TEXT_MUTED),
-            FileChangeKind::Renamed => ('R', ACCENT_DIM),
+            FileChangeKind::Added => ('A', app.theme.success),
+            FileChangeKind::Modified => ('M', app.theme.warning),
+            FileChangeKind::Deleted => ('D', app.theme.error),
+            FileChangeKind::Untracked => ('?', app.theme.text_muted),
+            FileChangeKind::Renamed => ('R', app.theme.accent_dim),
         };
 
         let viewed_char = if is_viewed { '✓' } else { '·' };
-        let viewed_color = if is_viewed { SUCCESS } else { TEXT_FAINT };
+        let viewed_color = if is_viewed {
+            app.theme.success
+        } else {
+            app.theme.text_faint
+        };
 
         let comment_count = app
             .open_comment_counts
@@ -347,11 +317,11 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
             .copied()
             .unwrap_or(0);
         let (comment_text, comment_color) = if comment_count == 0 {
-            ("  ".to_string(), TEXT_FAINT)
+            ("  ".to_string(), app.theme.text_faint)
         } else if comment_count < 10 {
-            (format!(" {}", comment_count), ACCENT)
+            (format!(" {}", comment_count), app.theme.accent)
         } else {
-            ("9+".to_string(), ACCENT)
+            ("9+".to_string(), app.theme.accent)
         };
 
         // Ellipsize path
@@ -364,11 +334,11 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
 
         // Text brightness based on state
         let text_color = if is_selected {
-            TEXT_BRIGHT
+            app.theme.text_bright
         } else if is_viewed {
-            TEXT_DIM // Viewed files are dimmer
+            app.theme.text_dim // Viewed files are dimmer
         } else {
-            TEXT_NORMAL
+            app.theme.text_normal
         };
 
         lines.push(Line::from(vec![
@@ -392,11 +362,11 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     while lines.len() < height {
         lines.push(Line::from(Span::styled(
             "",
-            Style::default().bg(BG_SURFACE),
+            Style::default().bg(app.theme.bg_surface),
         )));
     }
 
-    let para = Paragraph::new(lines).style(Style::default().bg(BG_SURFACE));
+    let para = Paragraph::new(lines).style(Style::default().bg(app.theme.bg_surface));
     frame.render_widget(para, inner);
 }
 
@@ -406,44 +376,50 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
     let is_focused = app.focus == Focus::Diff;
-    let border_color = if is_focused { ACCENT } else { BORDER_DIM };
-    let title_style = if is_focused {
-        Style::default().fg(ACCENT)
+    let border_color = if is_focused {
+        app.theme.accent
     } else {
-        Style::default().fg(TEXT_MUTED)
+        app.theme.border_dim
+    };
+    let title_style = if is_focused {
+        Style::default().fg(app.theme.accent)
+    } else {
+        Style::default().fg(app.theme.text_muted)
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(" Diff ", title_style))
-        .style(Style::default().bg(BG_DARK));
+        .style(Style::default().bg(app.theme.bg_dark));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     // Handle empty states
     if app.loading {
-        let msg = Paragraph::new("Loading diff…").style(Style::default().fg(TEXT_MUTED));
+        let msg = Paragraph::new("Loading diff…").style(Style::default().fg(app.theme.text_muted));
         frame.render_widget(msg, inner);
         return;
     }
 
     if app.is_binary {
         let msg = Paragraph::new("Binary file — cannot display diff")
-            .style(Style::default().fg(TEXT_MUTED));
+            .style(Style::default().fg(app.theme.text_muted));
         frame.render_widget(msg, inner);
         return;
     }
 
     let Some(diff) = &app.diff else {
-        let msg = Paragraph::new("No diff to display").style(Style::default().fg(TEXT_MUTED));
+        let msg =
+            Paragraph::new("No diff to display").style(Style::default().fg(app.theme.text_muted));
         frame.render_widget(msg, inner);
         return;
     };
 
     if diff.rows.is_empty() || !diff.has_changes() {
-        let msg = Paragraph::new("Files are identical").style(Style::default().fg(TEXT_MUTED));
+        let msg =
+            Paragraph::new("Files are identical").style(Style::default().fg(app.theme.text_muted));
         frame.render_widget(msg, inner);
         return;
     }
@@ -459,16 +435,16 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         .split(inner);
 
     render_diff_pane(frame, app, panes[0], true); // Old
-    render_pane_divider(frame, panes[1]); // Divider
+    render_pane_divider(frame, panes[1], &app.theme); // Divider
     render_diff_pane(frame, app, panes[2], false); // New
 }
 
 /// Render vertical divider between old/new panes.
-fn render_pane_divider(frame: &mut Frame, area: Rect) {
+fn render_pane_divider(frame: &mut Frame, area: Rect, theme: &Theme) {
     let lines: Vec<Line> = (0..area.height)
-        .map(|_| Line::from(Span::styled("│", Style::default().fg(PANE_DIVIDER))))
+        .map(|_| Line::from(Span::styled("│", Style::default().fg(theme.pane_divider))))
         .collect();
-    let para = Paragraph::new(lines).style(Style::default().bg(BG_DARK));
+    let para = Paragraph::new(lines).style(Style::default().bg(theme.bg_dark));
     frame.render_widget(para, area);
 }
 
@@ -504,21 +480,33 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         // Extract line info based on pane side
         let (line_ref, bg_color, inline_bg) = if is_old {
             match (&row.old, row.kind) {
-                (Some(line), ChangeKind::Equal) => (Some(line), BG_DARK, BG_DARK),
-                (Some(line), ChangeKind::Delete) | (Some(line), ChangeKind::Replace) => {
-                    (Some(line), DIFF_DELETE_BG, INLINE_DELETE_BG)
+                (Some(line), ChangeKind::Equal) => {
+                    (Some(line), app.theme.bg_dark, app.theme.bg_dark)
                 }
-                (None, ChangeKind::Insert) => (None, DIFF_EMPTY_BG, DIFF_EMPTY_BG),
-                _ => (None, BG_DARK, BG_DARK),
+                (Some(line), ChangeKind::Delete) | (Some(line), ChangeKind::Replace) => (
+                    Some(line),
+                    app.theme.diff_delete_bg,
+                    app.theme.inline_delete_bg,
+                ),
+                (None, ChangeKind::Insert) => {
+                    (None, app.theme.diff_empty_bg, app.theme.diff_empty_bg)
+                }
+                _ => (None, app.theme.bg_dark, app.theme.bg_dark),
             }
         } else {
             match (&row.new, row.kind) {
-                (Some(line), ChangeKind::Equal) => (Some(line), BG_DARK, BG_DARK),
-                (Some(line), ChangeKind::Insert) | (Some(line), ChangeKind::Replace) => {
-                    (Some(line), DIFF_INSERT_BG, INLINE_INSERT_BG)
+                (Some(line), ChangeKind::Equal) => {
+                    (Some(line), app.theme.bg_dark, app.theme.bg_dark)
                 }
-                (None, ChangeKind::Delete) => (None, DIFF_EMPTY_BG, DIFF_EMPTY_BG),
-                _ => (None, BG_DARK, BG_DARK),
+                (Some(line), ChangeKind::Insert) | (Some(line), ChangeKind::Replace) => (
+                    Some(line),
+                    app.theme.diff_insert_bg,
+                    app.theme.inline_insert_bg,
+                ),
+                (None, ChangeKind::Delete) => {
+                    (None, app.theme.diff_empty_bg, app.theme.diff_empty_bg)
+                }
+                _ => (None, app.theme.bg_dark, app.theme.bg_dark),
             }
         };
 
@@ -550,7 +538,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                     continue;
                 }
 
-                let fg = style_to_color(hl.style_id);
+                let fg = style_to_color(hl.style_id, &app.theme);
 
                 // Check if this syntax span overlaps with any changed inline regions
                 let has_inline_changes = inline_spans.is_some_and(|spans| {
@@ -688,31 +676,31 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             }
             let marker_char = if row.has_comment { "•" } else { " " };
             let marker_style = if row.has_comment {
-                Style::default().fg(ACCENT).bg(row.bg_color)
+                Style::default().fg(app.theme.accent).bg(row.bg_color)
             } else {
                 Style::default().bg(row.bg_color)
             };
             spans.push(Span::styled(marker_char, marker_style));
             spans.push(Span::styled(
                 "│",
-                Style::default().fg(GUTTER_SEP).bg(row.bg_color),
+                Style::default().fg(app.theme.gutter_sep).bg(row.bg_color),
             ));
             spans.push(Span::styled(
                 row.line_num_str,
-                Style::default().fg(TEXT_FAINT).bg(row.bg_color),
+                Style::default().fg(app.theme.text_faint).bg(row.bg_color),
             ));
         } else {
             spans.push(Span::styled(
                 row.line_num_str,
-                Style::default().fg(TEXT_FAINT).bg(row.bg_color),
+                Style::default().fg(app.theme.text_faint).bg(row.bg_color),
             ));
             spans.push(Span::styled(
                 "│",
-                Style::default().fg(GUTTER_SEP).bg(row.bg_color),
+                Style::default().fg(app.theme.gutter_sep).bg(row.bg_color),
             ));
             let marker_char = if row.has_comment { "•" } else { " " };
             let marker_style = if row.has_comment {
-                Style::default().fg(ACCENT).bg(row.bg_color)
+                Style::default().fg(app.theme.accent).bg(row.bg_color)
             } else {
                 Style::default().bg(row.bg_color)
             };
@@ -776,12 +764,14 @@ fn render_comments_overlay(frame: &mut Frame, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(ACCENT))
+        .border_style(Style::default().fg(app.theme.accent))
         .title(Span::styled(
             title,
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(BG_ELEVATED));
+        .style(Style::default().bg(app.theme.bg_elevated));
 
     let inner = block.inner(overlay_area);
     frame.render_widget(block, overlay_area);
@@ -795,7 +785,9 @@ fn render_comments_overlay(frame: &mut Frame, app: &App) {
     if app.viewing_comments.is_empty() {
         lines.push(Line::from(Span::styled(
             "No comments",
-            Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
+            Style::default()
+                .fg(app.theme.text_muted)
+                .bg(app.theme.bg_elevated),
         )));
     } else {
         let total = app.viewing_comments.len();
@@ -811,14 +803,14 @@ fn render_comments_overlay(frame: &mut Frame, app: &App) {
             let is_selected = idx == selected;
 
             let row_bg = if is_selected {
-                BG_SELECTED
+                app.theme.bg_selected
             } else {
-                BG_ELEVATED
+                app.theme.bg_elevated
             };
             let msg_color = if item.status == CommentStatus::Resolved {
-                TEXT_DIM
+                app.theme.text_dim
             } else {
-                TEXT_NORMAL
+                app.theme.text_normal
             };
 
             let status_char = if item.status == CommentStatus::Resolved {
@@ -830,33 +822,33 @@ fn render_comments_overlay(frame: &mut Frame, app: &App) {
             let mut spans: Vec<Span> = Vec::new();
             spans.push(Span::styled(
                 if is_selected { "▌" } else { " " },
-                Style::default().fg(ACCENT).bg(row_bg),
+                Style::default().fg(app.theme.accent).bg(row_bg),
             ));
             spans.push(Span::styled(
                 format!("#{} ", item.id),
                 Style::default()
-                    .fg(ACCENT)
+                    .fg(app.theme.accent)
                     .bg(row_bg)
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 status_char,
-                Style::default().fg(SUCCESS).bg(row_bg),
+                Style::default().fg(app.theme.success).bg(row_bg),
             ));
             spans.push(Span::styled(" ", Style::default().bg(row_bg)));
             spans.push(Span::styled(
                 item.anchor_summary.as_str(),
-                Style::default().fg(TEXT_MUTED).bg(row_bg),
+                Style::default().fg(app.theme.text_muted).bg(row_bg),
             ));
             if item.stale {
                 spans.push(Span::styled(
                     " [stale]",
-                    Style::default().fg(WARNING).bg(row_bg),
+                    Style::default().fg(app.theme.warning).bg(row_bg),
                 ));
             }
             spans.push(Span::styled(
                 " - ",
-                Style::default().fg(TEXT_MUTED).bg(row_bg),
+                Style::default().fg(app.theme.text_muted).bg(row_bg),
             ));
             spans.push(Span::styled(
                 item.message.as_str(),
@@ -870,11 +862,11 @@ fn render_comments_overlay(frame: &mut Frame, app: &App) {
     while lines.len() < inner.height as usize {
         lines.push(Line::from(Span::styled(
             "",
-            Style::default().bg(BG_ELEVATED),
+            Style::default().bg(app.theme.bg_elevated),
         )));
     }
 
-    let para = Paragraph::new(lines).style(Style::default().bg(BG_ELEVATED));
+    let para = Paragraph::new(lines).style(Style::default().bg(app.theme.bg_elevated));
     frame.render_widget(para, inner);
 }
 
@@ -886,19 +878,33 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Input mode
     if app.mode == Mode::AddComment {
         let line = Line::from(vec![
-            Span::styled(" Comment: ", Style::default().fg(ACCENT).bg(BG_ELEVATED)),
+            Span::styled(
+                " Comment: ",
+                Style::default()
+                    .fg(app.theme.accent)
+                    .bg(app.theme.bg_elevated),
+            ),
             Span::styled(
                 &app.draft_comment,
-                Style::default().fg(TEXT_BRIGHT).bg(BG_ELEVATED),
+                Style::default()
+                    .fg(app.theme.text_bright)
+                    .bg(app.theme.bg_elevated),
             ),
-            Span::styled("█", Style::default().fg(ACCENT).bg(BG_ELEVATED)),
+            Span::styled(
+                "█",
+                Style::default()
+                    .fg(app.theme.accent)
+                    .bg(app.theme.bg_elevated),
+            ),
             Span::styled(
                 "  Enter: save  Esc: cancel",
-                Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
+                Style::default()
+                    .fg(app.theme.text_muted)
+                    .bg(app.theme.bg_elevated),
             ),
         ]);
         // Pad remaining
-        let para = Paragraph::new(line).style(Style::default().bg(BG_ELEVATED));
+        let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_elevated));
         frame.render_widget(para, area);
         return;
     }
@@ -906,18 +912,32 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Filter mode
     if app.mode == Mode::FilterFiles {
         let line = Line::from(vec![
-            Span::styled(" Filter: ", Style::default().fg(ACCENT).bg(BG_ELEVATED)),
+            Span::styled(
+                " Filter: ",
+                Style::default()
+                    .fg(app.theme.accent)
+                    .bg(app.theme.bg_elevated),
+            ),
             Span::styled(
                 &app.sidebar_filter,
-                Style::default().fg(TEXT_BRIGHT).bg(BG_ELEVATED),
+                Style::default()
+                    .fg(app.theme.text_bright)
+                    .bg(app.theme.bg_elevated),
             ),
-            Span::styled("█", Style::default().fg(ACCENT).bg(BG_ELEVATED)),
+            Span::styled(
+                "█",
+                Style::default()
+                    .fg(app.theme.accent)
+                    .bg(app.theme.bg_elevated),
+            ),
             Span::styled(
                 "  Enter: apply  Esc: cancel",
-                Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
+                Style::default()
+                    .fg(app.theme.text_muted)
+                    .bg(app.theme.bg_elevated),
             ),
         ]);
-        let para = Paragraph::new(line).style(Style::default().bg(BG_ELEVATED));
+        let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_elevated));
         frame.render_widget(para, area);
         return;
     }
@@ -932,14 +952,18 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
         let line = Line::from(vec![
             Span::styled(
                 format!(" Comments ({}) ", scope),
-                Style::default().fg(ACCENT).bg(BG_ELEVATED),
+                Style::default()
+                    .fg(app.theme.accent)
+                    .bg(app.theme.bg_elevated),
             ),
             Span::styled(
                 " j/k: move  Enter: jump  r: resolve  a: all/open  Esc: close",
-                Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
+                Style::default()
+                    .fg(app.theme.text_muted)
+                    .bg(app.theme.bg_elevated),
             ),
         ]);
-        let para = Paragraph::new(line).style(Style::default().bg(BG_ELEVATED));
+        let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_elevated));
         frame.render_widget(para, area);
         return;
     }
@@ -947,10 +971,20 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Error message
     if let Some(ref err) = app.error_msg {
         let line = Line::from(vec![
-            Span::styled(" ✗ ", Style::default().fg(ERROR).bg(BG_ELEVATED)),
-            Span::styled(err.as_str(), Style::default().fg(ERROR).bg(BG_ELEVATED)),
+            Span::styled(
+                " ✗ ",
+                Style::default()
+                    .fg(app.theme.error)
+                    .bg(app.theme.bg_elevated),
+            ),
+            Span::styled(
+                err.as_str(),
+                Style::default()
+                    .fg(app.theme.error)
+                    .bg(app.theme.bg_elevated),
+            ),
         ]);
-        let para = Paragraph::new(line).style(Style::default().bg(BG_ELEVATED));
+        let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_elevated));
         frame.render_widget(para, area);
         return;
     }
@@ -958,10 +992,20 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Status message
     if let Some(ref msg) = app.status_msg {
         let line = Line::from(vec![
-            Span::styled(" ✓ ", Style::default().fg(SUCCESS).bg(BG_ELEVATED)),
-            Span::styled(msg.as_str(), Style::default().fg(SUCCESS).bg(BG_ELEVATED)),
+            Span::styled(
+                " ✓ ",
+                Style::default()
+                    .fg(app.theme.success)
+                    .bg(app.theme.bg_elevated),
+            ),
+            Span::styled(
+                msg.as_str(),
+                Style::default()
+                    .fg(app.theme.success)
+                    .bg(app.theme.bg_elevated),
+            ),
         ]);
-        let para = Paragraph::new(line).style(Style::default().bg(BG_ELEVATED));
+        let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_elevated));
         frame.render_widget(para, area);
         return;
     }
@@ -987,22 +1031,29 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
         ],
     };
 
-    let mut spans = vec![Span::styled(" ", Style::default().bg(BG_SURFACE))];
+    let mut spans = vec![Span::styled(" ", Style::default().bg(app.theme.bg_surface))];
     for (i, (key, desc)) in hints.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled("  ", Style::default().bg(BG_SURFACE)));
+            spans.push(Span::styled(
+                "  ",
+                Style::default().bg(app.theme.bg_surface),
+            ));
         }
         spans.push(Span::styled(
             *key,
-            Style::default().fg(ACCENT).bg(BG_SURFACE),
+            Style::default()
+                .fg(app.theme.accent)
+                .bg(app.theme.bg_surface),
         ));
         spans.push(Span::styled(
             format!(" {}", desc),
-            Style::default().fg(TEXT_DIM).bg(BG_SURFACE),
+            Style::default()
+                .fg(app.theme.text_dim)
+                .bg(app.theme.bg_surface),
         ));
     }
 
     let line = Line::from(spans);
-    let para = Paragraph::new(line).style(Style::default().bg(BG_SURFACE));
+    let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_surface));
     frame.render_widget(para, area);
 }
