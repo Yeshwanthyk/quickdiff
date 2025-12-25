@@ -138,11 +138,11 @@ fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
             app.scroll_y = 0;
             true
         }
-        KeyCode::Char('c') => {
+        KeyCode::Char('c') if app.is_worktree_mode() => {
             app.start_add_comment();
             true
         }
-        KeyCode::Char('C') => {
+        KeyCode::Char('C') if app.is_worktree_mode() => {
             app.show_comments();
             true
         }

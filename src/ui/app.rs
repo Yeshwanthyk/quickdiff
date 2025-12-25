@@ -567,6 +567,12 @@ impl App {
         format!("{}/{}", self.viewed_in_changeset, self.files.len())
     }
 
+    /// Check if we're in working tree mode (uncommitted changes).
+    /// Comments are only available in this mode.
+    pub fn is_worktree_mode(&self) -> bool {
+        matches!(self.source, DiffSource::WorkingTree)
+    }
+
     /// Mark dirty for redraw.
     pub fn mark_dirty(&mut self) {
         self.dirty = true;

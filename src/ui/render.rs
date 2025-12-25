@@ -147,16 +147,18 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         ));
     }
 
-    // Open comments for this file (in current context)
-    if let Some(file) = file {
-        if let Some(count) = app.open_comment_counts.get(&file.path) {
-            if *count > 0 {
-                spans.push(Span::styled(
-                    format!("  {} comments", count),
-                    Style::default()
-                        .fg(app.theme.accent)
-                        .bg(app.theme.bg_elevated),
-                ));
+    // Open comments for this file (only in worktree mode)
+    if app.is_worktree_mode() {
+        if let Some(file) = file {
+            if let Some(count) = app.open_comment_counts.get(&file.path) {
+                if *count > 0 {
+                    spans.push(Span::styled(
+                        format!("  {} comments", count),
+                        Style::default()
+                            .fg(app.theme.accent)
+                            .bg(app.theme.bg_elevated),
+                    ));
+                }
             }
         }
     }
@@ -316,17 +318,22 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
             app.theme.text_faint
         };
 
-        let comment_count = app
-            .open_comment_counts
-            .get(&file.path)
-            .copied()
-            .unwrap_or(0);
-        let (comment_text, comment_color) = if comment_count == 0 {
-            ("  ".to_string(), app.theme.text_faint)
-        } else if comment_count < 10 {
-            (format!(" {}", comment_count), app.theme.accent)
+        // Comment counts only shown in worktree mode
+        let (comment_text, comment_color) = if app.is_worktree_mode() {
+            let comment_count = app
+                .open_comment_counts
+                .get(&file.path)
+                .copied()
+                .unwrap_or(0);
+            if comment_count == 0 {
+                ("  ".to_string(), app.theme.text_faint)
+            } else if comment_count < 10 {
+                (format!(" {}", comment_count), app.theme.accent)
+            } else {
+                ("9+".to_string(), app.theme.accent)
+            }
         } else {
-            ("9+".to_string(), app.theme.accent)
+            ("  ".to_string(), app.theme.text_faint)
         };
 
         // Ellipsize path
@@ -479,9 +486,10 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
 
     for (offset, row) in diff.render_rows(app.scroll_y, height).enumerate() {
         let row_idx = app.scroll_y + offset;
-        let has_comment = diff
-            .hunk_at_row(row_idx)
-            .is_some_and(|h| app.commented_hunks.contains(&h));
+        let has_comment = app.is_worktree_mode()
+            && diff
+                .hunk_at_row(row_idx)
+                .is_some_and(|h| app.commented_hunks.contains(&h));
         // Extract line info based on pane side
         let (line_ref, bg_color, inline_bg) = if is_old {
             match (&row.old, row.kind) {
