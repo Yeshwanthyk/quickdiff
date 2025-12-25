@@ -280,6 +280,105 @@ pub fn load_revision_content(
     Ok(output.stdout)
 }
 
+/// Resolve the merge-base between a base ref and HEAD.
+pub fn resolve_merge_base(root: &RepoRoot, base: &str) -> Result<String, RepoError> {
+    let output = Command::new("git")
+        .args(["merge-base", base, "HEAD"])
+        .current_dir(root.path())
+        .output()?;
+
+    if output.status.success() {
+        Ok(std::str::from_utf8(&output.stdout)
+            .map_err(|_| RepoError::InvalidUtf8)?
+            .trim()
+            .to_string())
+    } else {
+        // Fall back to using the base ref directly
+        resolve_revision(root, base)
+    }
+}
+
+/// Load the old/new content for a specific file given a diff source.
+///
+/// For `DiffSource::Base`, provide `merge_base` to avoid recomputing it per file.
+pub fn load_diff_contents(
+    root: &RepoRoot,
+    source: &DiffSource,
+    file: &ChangedFile,
+    merge_base: Option<&str>,
+) -> Result<(Vec<u8>, Vec<u8>), RepoError> {
+    let path = &file.path;
+    let kind = file.kind;
+    let old_path = file.old_path.as_ref();
+
+    match source {
+        DiffSource::WorkingTree => match kind {
+            FileChangeKind::Added | FileChangeKind::Untracked => {
+                Ok((Vec::new(), load_working_content(root, path)?))
+            }
+            FileChangeKind::Deleted => Ok((load_head_content(root, path)?, Vec::new())),
+            FileChangeKind::Modified | FileChangeKind::Renamed => {
+                let old_p = old_path.unwrap_or(path);
+                Ok((
+                    load_head_content(root, old_p)?,
+                    load_working_content(root, path)?,
+                ))
+            }
+        },
+        DiffSource::Commit(commit) => {
+            let parent = get_parent_revision(root, commit)?;
+            match kind {
+                FileChangeKind::Added => {
+                    Ok((Vec::new(), load_revision_content(root, commit, path)?))
+                }
+                FileChangeKind::Deleted => {
+                    Ok((load_revision_content(root, &parent, path)?, Vec::new()))
+                }
+                FileChangeKind::Modified | FileChangeKind::Renamed | FileChangeKind::Untracked => {
+                    let old_p = old_path.unwrap_or(path);
+                    Ok((
+                        load_revision_content(root, &parent, old_p)?,
+                        load_revision_content(root, commit, path)?,
+                    ))
+                }
+            }
+        }
+        DiffSource::Range { from, to } => match kind {
+            FileChangeKind::Added => Ok((Vec::new(), load_revision_content(root, to, path)?)),
+            FileChangeKind::Deleted => Ok((load_revision_content(root, from, path)?, Vec::new())),
+            FileChangeKind::Modified | FileChangeKind::Renamed | FileChangeKind::Untracked => {
+                let old_p = old_path.unwrap_or(path);
+                Ok((
+                    load_revision_content(root, from, old_p)?,
+                    load_revision_content(root, to, path)?,
+                ))
+            }
+        },
+        DiffSource::Base(base) => {
+            let merge_base = match merge_base {
+                Some(mb) => mb.to_string(),
+                None => resolve_merge_base(root, base)?,
+            };
+
+            match kind {
+                FileChangeKind::Added | FileChangeKind::Untracked => {
+                    Ok((Vec::new(), load_working_content(root, path)?))
+                }
+                FileChangeKind::Deleted => {
+                    Ok((load_revision_content(root, &merge_base, path)?, Vec::new()))
+                }
+                FileChangeKind::Modified | FileChangeKind::Renamed => {
+                    let old_p = old_path.unwrap_or(path);
+                    Ok((
+                        load_revision_content(root, &merge_base, old_p)?,
+                        load_working_content(root, path)?,
+                    ))
+                }
+            }
+        }
+    }
+}
+
 /// Resolve a revision to its full SHA.
 pub fn resolve_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
     let output = Command::new("git")
@@ -364,21 +463,7 @@ pub fn list_changed_files_from_base_with_merge_base(
     root: &RepoRoot,
     base: &str,
 ) -> Result<BaseComparison, RepoError> {
-    // Get merge-base to find common ancestor
-    let output = Command::new("git")
-        .args(["merge-base", base, "HEAD"])
-        .current_dir(root.path())
-        .output()?;
-
-    let merge_base = if output.status.success() {
-        std::str::from_utf8(&output.stdout)
-            .map_err(|_| RepoError::InvalidUtf8)?
-            .trim()
-            .to_string()
-    } else {
-        // Fall back to using the base ref directly
-        resolve_revision(root, base)?
-    };
+    let merge_base = resolve_merge_base(root, base)?;
 
     // Get files changed between merge-base and HEAD
     let committed = list_changed_files_between(root, &merge_base, "HEAD")?;
