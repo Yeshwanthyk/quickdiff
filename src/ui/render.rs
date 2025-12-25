@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use crate::core::{ChangeKind, CommentStatus, FileChangeKind, ViewedStore};
-use crate::highlight::StyleId;
+use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId};
 use crate::theme::Theme;
 
 use super::app::{App, Focus, Mode};
@@ -483,12 +483,51 @@ fn render_pane_divider(frame: &mut Frame, area: Rect, theme: &Theme) {
 /// Gutter: 4 (line num) + 2 (separator) = 6 chars
 const GUTTER_WIDTH: usize = 6;
 
+/// Compute the sticky scope for a pane based on the first visible source line.
+fn compute_sticky_scope<'a>(
+    diff: &crate::core::DiffResult,
+    scopes: &'a [ScopeInfo],
+    scroll_y: usize,
+    is_old: bool,
+) -> Option<&'a ScopeInfo> {
+    // Get the first visible row to find the source line number
+    let first_row = diff.render_rows(scroll_y, 1).next()?;
+
+    // Get the source line number for this pane
+    let line_num = if is_old {
+        first_row.old.as_ref()?.line_num
+    } else {
+        first_row.new.as_ref()?.line_num
+    };
+
+    // Find enclosing scope
+    let scope = find_enclosing_scope(scopes, line_num)?;
+
+    // Only show if we've scrolled past the definition line
+    if line_num > scope.start_line {
+        Some(scope)
+    } else {
+        None
+    }
+}
+
 fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     let Some(diff) = &app.diff else {
         return;
     };
 
-    let height = area.height as usize;
+    // Check for sticky scope
+    let scopes = if is_old {
+        &app.old_scopes
+    } else {
+        &app.new_scopes
+    };
+    let sticky_scope = compute_sticky_scope(diff, scopes, app.scroll_y, is_old);
+    let has_sticky = sticky_scope.is_some();
+
+    // Reserve 1 line for sticky header if present
+    let sticky_height = if has_sticky { 1 } else { 0 };
+    let content_height = (area.height as usize).saturating_sub(sticky_height);
     let max_content = (area.width as usize).saturating_sub(GUTTER_WIDTH);
     let spaces = " ".repeat(max_content);
 
@@ -501,10 +540,10 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     }
 
     // First pass: build spans and compute max visible width in this viewport.
-    let mut rendered: Vec<RenderedLine> = Vec::with_capacity(height);
+    let mut rendered: Vec<RenderedLine> = Vec::with_capacity(content_height);
     let mut max_visible_len = 0usize;
 
-    for (offset, row) in diff.render_rows(app.scroll_y, height).enumerate() {
+    for (offset, row) in diff.render_rows(app.scroll_y, content_height).enumerate() {
         let row_idx = app.scroll_y + offset;
         let has_comment = app.is_worktree_mode()
             && diff
@@ -682,7 +721,77 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         0
     };
 
-    let mut lines: Vec<Line> = Vec::with_capacity(height);
+    let total_height = if has_sticky {
+        content_height + 1
+    } else {
+        content_height
+    };
+    let mut lines: Vec<Line> = Vec::with_capacity(total_height);
+
+    // Render sticky header if present
+    if let Some(scope) = sticky_scope {
+        let sticky_bg = app.theme.bg_elevated;
+        let mut spans: Vec<Span> = Vec::new();
+
+        // Build display text: "kind name" (e.g., "fn compute_diff")
+        let display_text = if scope.name.is_empty() {
+            scope.kind.to_string()
+        } else {
+            format!("{} {}", scope.kind, scope.name)
+        };
+
+        if is_old {
+            // OLD pane: right-align the sticky text
+            let text_len = display_text.chars().count();
+            let padding = max_content.saturating_sub(text_len);
+            if padding > 0 {
+                spans.push(Span::styled(
+                    &spaces[..padding],
+                    Style::default().bg(sticky_bg),
+                ));
+            }
+            spans.push(Span::styled(
+                display_text,
+                Style::default()
+                    .fg(app.theme.text_muted)
+                    .bg(sticky_bg)
+                    .add_modifier(Modifier::ITALIC),
+            ));
+            // Gutter
+            spans.push(Span::styled(" ", Style::default().bg(sticky_bg)));
+            spans.push(Span::styled(
+                "│",
+                Style::default().fg(app.theme.gutter_sep).bg(sticky_bg),
+            ));
+            spans.push(Span::styled("    ", Style::default().bg(sticky_bg)));
+        } else {
+            // NEW pane: left-align with gutter
+            spans.push(Span::styled("    ", Style::default().bg(sticky_bg)));
+            spans.push(Span::styled(
+                "│",
+                Style::default().fg(app.theme.gutter_sep).bg(sticky_bg),
+            ));
+            spans.push(Span::styled(" ", Style::default().bg(sticky_bg)));
+            spans.push(Span::styled(
+                display_text.clone(),
+                Style::default()
+                    .fg(app.theme.text_muted)
+                    .bg(sticky_bg)
+                    .add_modifier(Modifier::ITALIC),
+            ));
+            // Pad to fill width
+            let text_len = display_text.chars().count();
+            let trailing = max_content.saturating_sub(text_len);
+            if trailing > 0 {
+                spans.push(Span::styled(
+                    &spaces[..trailing],
+                    Style::default().bg(sticky_bg),
+                ));
+            }
+        }
+
+        lines.push(Line::from(spans));
+    }
 
     for row in rendered {
         // Build the line with pane-specific layout:
