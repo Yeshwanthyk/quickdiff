@@ -61,6 +61,7 @@ pub struct FileCommentStore {
 
 impl FileCommentStore {
     /// Open or create a comment store for the given repo.
+    #[must_use = "this returns a Result that should be checked"]
     pub fn open(repo_root: &RepoRoot) -> io::Result<Self> {
         let dir = repo_root.path().join(".quickdiff");
         let state_path = dir.join("comments.json");
@@ -81,6 +82,7 @@ impl FileCommentStore {
     }
 
     /// Save state to disk using atomic write.
+    #[must_use = "this returns a Result that should be checked"]
     pub fn save(&self) -> io::Result<()> {
         // Ensure parent directory exists
         if let Some(parent) = self.state_path.parent() {

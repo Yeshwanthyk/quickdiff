@@ -61,6 +61,7 @@ pub struct RepoRoot(PathBuf);
 
 impl RepoRoot {
     /// Discover the git repository containing the given path.
+    #[must_use = "this returns a Result that should be checked"]
     pub fn discover(path: &Path) -> Result<Self, RepoError> {
         let output = Command::new("git")
             .arg("rev-parse")
@@ -105,6 +106,19 @@ impl RelPath {
     /// Create a new RelPath from a string.
     ///
     /// Returns an error if the path is absolute (starts with `/`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use quickdiff::core::RelPath;
+    ///
+    /// let path = RelPath::try_new("src/main.rs").unwrap();
+    /// assert_eq!(path.as_str(), "src/main.rs");
+    ///
+    /// // Absolute paths are rejected
+    /// assert!(RelPath::try_new("/absolute/path").is_err());
+    /// ```
+    #[must_use = "this returns a Result that should be checked"]
     pub fn try_new(path: impl Into<String>) -> Result<Self, InvalidRelPath> {
         let path = path.into();
         if path.starts_with('/') {
@@ -211,6 +225,7 @@ impl ChangedFile {
 }
 
 /// List changed files in the working tree vs HEAD.
+#[must_use = "this returns a Result that should be checked"]
 pub fn list_changed_files(root: &RepoRoot) -> Result<Vec<ChangedFile>, RepoError> {
     let output = Command::new("git")
         .args(["status", "--porcelain=v1", "-z"])
@@ -278,6 +293,7 @@ fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
 }
 
 /// Load content from HEAD for a given path.
+#[must_use = "this returns a Result that should be checked"]
 pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, RepoError> {
     let output = Command::new("git")
         .args(["show", &format!("HEAD:{}", path.as_str())])
@@ -294,6 +310,7 @@ pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, Rep
 
 /// Load content from the working tree.
 /// Returns empty content for directories, symlinks, or missing files.
+#[must_use = "this returns a Result that should be checked"]
 pub fn load_working_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, RepoError> {
     let full_path = path.to_absolute(root);
 
@@ -313,6 +330,7 @@ pub fn load_working_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, 
 }
 
 /// Load content from a specific git revision.
+#[must_use = "this returns a Result that should be checked"]
 pub fn load_revision_content(
     root: &RepoRoot,
     revision: &str,
@@ -332,6 +350,7 @@ pub fn load_revision_content(
 }
 
 /// Resolve the merge-base between a base ref and HEAD.
+#[must_use = "this returns a Result that should be checked"]
 pub fn resolve_merge_base(root: &RepoRoot, base: &str) -> Result<String, RepoError> {
     let output = Command::new("git")
         .args(["merge-base", base, "HEAD"])
@@ -352,6 +371,7 @@ pub fn resolve_merge_base(root: &RepoRoot, base: &str) -> Result<String, RepoErr
 /// Load the old/new content for a specific file given a diff source.
 ///
 /// For `DiffSource::Base`, provide `merge_base` to avoid recomputing it per file.
+#[must_use = "this returns a Result that should be checked"]
 pub fn load_diff_contents(
     root: &RepoRoot,
     source: &DiffSource,
@@ -431,6 +451,7 @@ pub fn load_diff_contents(
 }
 
 /// Resolve a revision to its full SHA.
+#[must_use = "this returns a Result that should be checked"]
 pub fn resolve_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
     let output = Command::new("git")
         .args(["rev-parse", "--verify", revision])
@@ -450,6 +471,7 @@ pub fn resolve_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoE
 }
 
 /// Get the parent commit of a revision.
+#[must_use = "this returns a Result that should be checked"]
 pub fn get_parent_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
     let output = Command::new("git")
         .args(["rev-parse", "--verify", &format!("{}^", revision)])
@@ -470,6 +492,7 @@ pub fn get_parent_revision(root: &RepoRoot, revision: &str) -> Result<String, Re
 }
 
 /// List changed files between two revisions.
+#[must_use = "this returns a Result that should be checked"]
 pub fn list_changed_files_between(
     root: &RepoRoot,
     from: &str,
@@ -497,6 +520,7 @@ pub fn list_changed_files_between(
 }
 
 /// List changed files in a single commit.
+#[must_use = "this returns a Result that should be checked"]
 pub fn list_commit_files(root: &RepoRoot, commit: &str) -> Result<Vec<ChangedFile>, RepoError> {
     let parent = get_parent_revision(root, commit)?;
     list_changed_files_between(root, &parent, commit)
@@ -512,6 +536,7 @@ pub struct BaseComparison {
 }
 
 /// List changed files between a base ref and HEAD (including working tree), returning the merge-base SHA.
+#[must_use = "this returns a Result that should be checked"]
 pub fn list_changed_files_from_base_with_merge_base(
     root: &RepoRoot,
     base: &str,
@@ -544,6 +569,7 @@ pub fn list_changed_files_from_base_with_merge_base(
 }
 
 /// List changed files between a base ref and HEAD (including working tree).
+#[must_use = "this returns a Result that should be checked"]
 pub fn list_changed_files_from_base(
     root: &RepoRoot,
     base: &str,

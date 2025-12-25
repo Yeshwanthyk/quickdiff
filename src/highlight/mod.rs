@@ -1,7 +1,8 @@
 //! Syntax highlighting using Tree-sitter.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+
+use parking_lot::Mutex;
 
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TsHighlighter};
 
@@ -195,10 +196,7 @@ impl TreeSitterHighlighter {
 
 impl HighlighterTrait for TreeSitterHighlighter {
     fn highlight(&self, source: &str) -> Vec<StyledSpan> {
-        let mut highlighter = match self.highlighter.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut highlighter = self.highlighter.lock();
         let source_bytes = source.as_bytes();
 
         let highlights = match highlighter.highlight(&self.config, source_bytes, None, |_| None) {

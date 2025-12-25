@@ -1,6 +1,6 @@
 //! Background worker for loading file content and computing diffs.
 
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
 
 use crate::core::{load_diff_contents, ChangedFile, DiffResult, DiffSource, RepoRoot, TextBuffer};
@@ -29,7 +29,7 @@ pub(crate) enum DiffLoadResponse {
 }
 
 pub(crate) struct DiffWorker {
-    pub request_tx: Sender<DiffLoadRequest>,
+    pub request_tx: SyncSender<DiffLoadRequest>,
     pub response_rx: Receiver<DiffLoadResponse>,
     handle: Option<JoinHandle<()>>,
 }
@@ -45,7 +45,8 @@ impl std::fmt::Debug for DiffWorker {
 }
 
 pub(crate) fn spawn_diff_worker(repo: RepoRoot) -> DiffWorker {
-    let (request_tx, request_rx) = mpsc::channel::<DiffLoadRequest>();
+    // Bounded channel: only latest request matters (worker drains queue anyway)
+    let (request_tx, request_rx) = mpsc::sync_channel::<DiffLoadRequest>(1);
     let (response_tx, response_rx) = mpsc::channel::<DiffLoadResponse>();
 
     let handle = thread::spawn(move || worker_loop(repo, request_rx, response_tx));

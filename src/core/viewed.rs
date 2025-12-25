@@ -125,6 +125,7 @@ pub struct FileViewedStore {
 impl FileViewedStore {
     /// Create a new FileViewedStore.
     /// Loads existing state if available.
+    #[must_use = "this returns a Result that should be checked"]
     pub fn new(repo_root: &str) -> std::io::Result<Self> {
         let state_path = Self::default_state_path()?;
         let mut store = Self {
@@ -138,6 +139,7 @@ impl FileViewedStore {
     }
 
     /// Create with a custom state path (for testing).
+    #[must_use = "this returns a Result that should be checked"]
     pub fn with_path(repo_root: &str, state_path: std::path::PathBuf) -> std::io::Result<Self> {
         let mut store = Self {
             state_path,
@@ -172,6 +174,7 @@ impl FileViewedStore {
     }
 
     /// Save state to disk (atomic write).
+    #[must_use = "this returns a Result that should be checked"]
     pub fn save(&self) -> std::io::Result<()> {
         // Load existing state to preserve other repos
         let mut state = if self.state_path.exists() {

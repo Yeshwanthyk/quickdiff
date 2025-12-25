@@ -757,6 +757,7 @@ dependencies = [
  "crossterm",
  "directories",
  "dirs",
+ "parking_lot",
  "ratatui",
  "serde",
  "serde_json",
