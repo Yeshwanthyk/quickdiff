@@ -9,7 +9,7 @@ use crate::core::{
     CommentStore, DiffResult, DiffSource, FileCommentStore, FileViewedStore, FuzzyMatcher, RelPath,
     RepoRoot, RepoWatcher, Selector, TextBuffer, ViewedStore,
 };
-use crate::highlight::{HighlighterCache, LanguageId};
+use crate::highlight::{query_scopes, HighlighterCache, LanguageId, ScopeInfo};
 use crate::theme::Theme;
 
 use super::worker::{spawn_diff_worker, DiffLoadRequest, DiffLoadResponse, DiffWorker};
@@ -127,6 +127,12 @@ pub struct App {
     pub highlighter: HighlighterCache,
     /// Current file's language.
     pub current_lang: LanguageId,
+
+    // Sticky line scopes
+    /// Scopes for old file content.
+    pub old_scopes: Vec<ScopeInfo>,
+    /// Scopes for new file content.
+    pub new_scopes: Vec<ScopeInfo>,
 
     // Theme
     /// Current color theme.
@@ -257,6 +263,8 @@ impl App {
             dirty: true,
             highlighter: HighlighterCache::new(),
             current_lang: LanguageId::Plain,
+            old_scopes: Vec::new(),
+            new_scopes: Vec::new(),
             theme,
             theme_list: Theme::list(),
             theme_selector_idx: 0,
@@ -372,6 +380,8 @@ impl App {
         self.diff = None;
         self.old_buffer = None;
         self.new_buffer = None;
+        self.old_scopes.clear();
+        self.new_scopes.clear();
         self.scroll_y = 0;
         self.scroll_x = 0;
 
@@ -429,9 +439,22 @@ impl App {
                     self.error_msg = None;
 
                     self.is_binary = is_binary;
-                    self.old_buffer = Some(old_buffer);
-                    self.new_buffer = Some(new_buffer);
+                    self.old_buffer = Some(old_buffer.clone());
+                    self.new_buffer = Some(new_buffer.clone());
                     self.diff = diff;
+
+                    // Compute scopes for sticky line display
+                    if !is_binary {
+                        let lang = self.current_lang;
+                        let old_str = String::from_utf8_lossy(old_buffer.as_bytes());
+                        let new_str = String::from_utf8_lossy(new_buffer.as_bytes());
+                        self.old_scopes = query_scopes(lang, &old_str);
+                        self.new_scopes = query_scopes(lang, &new_str);
+                    } else {
+                        self.old_scopes.clear();
+                        self.new_scopes.clear();
+                    }
+
                     self.refresh_current_file_comment_markers();
                     self.dirty = true;
                 }
