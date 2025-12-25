@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use parking_lot::Mutex;
-
+use streaming_iterator::StreamingIterator;
+use tree_sitter::{Parser, Query, QueryCursor};
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TsHighlighter};
 
 /// Language identifier for syntax highlighting.
@@ -114,6 +115,173 @@ const HIGHLIGHT_NAMES: &[&str] = &[
     "variable.builtin",
     "variable.parameter",
 ];
+
+// ============================================================================
+// Scope Queries
+// ============================================================================
+
+/// Information about a scope-defining construct (function, class, etc).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeInfo {
+    /// Name of the scope (e.g., function name).
+    pub name: String,
+    /// Kind of scope (e.g., "fn", "impl", "class").
+    pub kind: &'static str,
+    /// Start line (0-indexed).
+    pub start_line: usize,
+    /// End line (0-indexed, inclusive).
+    pub end_line: usize,
+}
+
+/// Rust scope query - captures function_item, impl_item, struct_item, mod_item
+#[cfg(feature = "lang-rust")]
+const RUST_SCOPE_QUERY: &str = r#"
+(function_item name: (identifier) @name) @scope
+(impl_item type: (_) @name) @scope
+(struct_item name: (type_identifier) @name) @scope
+(mod_item name: (identifier) @name) @scope
+"#;
+
+/// TypeScript/JavaScript scope query - captures function, class, method definitions
+#[cfg(feature = "lang-typescript")]
+const TS_SCOPE_QUERY: &str = r#"
+(function_declaration name: (identifier) @name) @scope
+(class_declaration name: (type_identifier) @name) @scope
+(method_definition name: (property_identifier) @name) @scope
+(arrow_function) @scope
+(function_expression) @scope
+"#;
+
+/// Query scopes from source code for a given language.
+/// Returns scopes sorted by start_line, with nested scopes following their parents.
+pub fn query_scopes(lang: LanguageId, source: &str) -> Vec<ScopeInfo> {
+    match lang {
+        #[cfg(feature = "lang-rust")]
+        LanguageId::Rust => query_scopes_with_lang(
+            tree_sitter_rust::LANGUAGE.into(),
+            RUST_SCOPE_QUERY,
+            source,
+            |node| match node.kind() {
+                "function_item" => "fn",
+                "impl_item" => "impl",
+                "struct_item" => "struct",
+                "mod_item" => "mod",
+                _ => "scope",
+            },
+        ),
+        #[cfg(feature = "lang-typescript")]
+        LanguageId::TypeScript | LanguageId::JavaScript => query_scopes_with_lang(
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            TS_SCOPE_QUERY,
+            source,
+            |node| match node.kind() {
+                "function_declaration" => "function",
+                "class_declaration" => "class",
+                "method_definition" => "method",
+                "arrow_function" => "=>",
+                "function_expression" => "function",
+                _ => "scope",
+            },
+        ),
+        #[cfg(feature = "lang-typescript")]
+        LanguageId::TypeScriptReact | LanguageId::JavaScriptReact => query_scopes_with_lang(
+            tree_sitter_typescript::LANGUAGE_TSX.into(),
+            TS_SCOPE_QUERY,
+            source,
+            |node| match node.kind() {
+                "function_declaration" => "function",
+                "class_declaration" => "class",
+                "method_definition" => "method",
+                "arrow_function" => "=>",
+                "function_expression" => "function",
+                _ => "scope",
+            },
+        ),
+        _ => Vec::new(),
+    }
+}
+
+fn query_scopes_with_lang<F>(
+    language: tree_sitter::Language,
+    query_str: &str,
+    source: &str,
+    kind_fn: F,
+) -> Vec<ScopeInfo>
+where
+    F: Fn(tree_sitter::Node) -> &'static str,
+{
+    let mut parser = Parser::new();
+    if parser.set_language(&language).is_err() {
+        return Vec::new();
+    }
+
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+
+    let Ok(query) = Query::new(&language, query_str) else {
+        return Vec::new();
+    };
+
+    let mut cursor = QueryCursor::new();
+    let source_bytes = source.as_bytes();
+
+    let name_idx = query.capture_index_for_name("name");
+    let scope_idx = query.capture_index_for_name("scope");
+
+    let mut scopes: Vec<ScopeInfo> = Vec::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source_bytes);
+
+    while let Some(m) = matches.next() {
+        let mut scope_node = None;
+        let mut name_text = None;
+
+        for capture in m.captures {
+            if Some(capture.index) == scope_idx {
+                scope_node = Some(capture.node);
+            } else if Some(capture.index) == name_idx {
+                name_text = capture.node.utf8_text(source_bytes).ok();
+            }
+        }
+
+        if let Some(node) = scope_node {
+            let kind = kind_fn(node);
+            let name = name_text.unwrap_or("").to_string();
+            let start_line = node.start_position().row;
+            let end_line = node.end_position().row;
+
+            scopes.push(ScopeInfo {
+                name,
+                kind,
+                start_line,
+                end_line,
+            });
+        }
+    }
+
+    // Sort by start_line, then by end_line descending (larger scopes first)
+    scopes.sort_by(|a, b| {
+        a.start_line
+            .cmp(&b.start_line)
+            .then(b.end_line.cmp(&a.end_line))
+    });
+
+    scopes
+}
+
+/// Find the innermost enclosing scope for a given line.
+/// Uses binary search for efficiency.
+pub fn find_enclosing_scope(scopes: &[ScopeInfo], line: usize) -> Option<&ScopeInfo> {
+    // Find all scopes that contain this line, return the innermost (smallest range)
+    scopes
+        .iter()
+        .filter(|s| s.start_line <= line && line <= s.end_line)
+        .min_by_key(|s| s.end_line - s.start_line)
+}
+
+// ============================================================================
+// Highlight Styles
+// ============================================================================
 
 /// Map highlight name to StyleId.
 fn highlight_name_to_style(name: &str) -> StyleId {
@@ -316,6 +484,80 @@ mod tests {
         assert_eq!(LanguageId::from_extension("txt"), LanguageId::Plain);
         #[cfg(feature = "lang-rust")]
         assert_eq!(LanguageId::from_extension("RS"), LanguageId::Rust);
+    }
+
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn rust_scope_query() {
+        let source = r#"
+fn main() {
+    println!("hello");
+}
+
+impl Foo {
+    fn bar(&self) {}
+}
+"#;
+        let scopes = query_scopes(LanguageId::Rust, source);
+        assert!(!scopes.is_empty());
+
+        // Should find main function
+        let main_scope = scopes.iter().find(|s| s.name == "main");
+        assert!(main_scope.is_some());
+        assert_eq!(main_scope.unwrap().kind, "fn");
+
+        // Should find impl
+        let impl_scope = scopes.iter().find(|s| s.name == "Foo");
+        assert!(impl_scope.is_some());
+        assert_eq!(impl_scope.unwrap().kind, "impl");
+    }
+
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn find_enclosing_scope_rust() {
+        let source = r#"fn outer() {
+    fn inner() {
+        let x = 1;
+    }
+}
+"#;
+        let scopes = query_scopes(LanguageId::Rust, source);
+
+        // Line 2 (inner function body) should find inner, not outer
+        let scope = find_enclosing_scope(&scopes, 2);
+        assert!(scope.is_some());
+        assert_eq!(scope.unwrap().name, "inner");
+
+        // Line 0 should find outer
+        let scope = find_enclosing_scope(&scopes, 0);
+        assert!(scope.is_some());
+        assert_eq!(scope.unwrap().name, "outer");
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn ts_scope_query() {
+        let source = r#"
+function hello() {
+    console.log("hi");
+}
+
+class Foo {
+    bar() {}
+}
+"#;
+        let scopes = query_scopes(LanguageId::TypeScript, source);
+        assert!(!scopes.is_empty());
+
+        // Should find hello function
+        let hello_scope = scopes.iter().find(|s| s.name == "hello");
+        assert!(hello_scope.is_some());
+        assert_eq!(hello_scope.unwrap().kind, "function");
+
+        // Should find Foo class
+        let class_scope = scopes.iter().find(|s| s.name == "Foo");
+        assert!(class_scope.is_some());
+        assert_eq!(class_scope.unwrap().kind, "class");
     }
 
     #[test]
