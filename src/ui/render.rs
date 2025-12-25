@@ -426,7 +426,17 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     let height = area.height as usize;
     let max_content = (area.width as usize).saturating_sub(GUTTER_WIDTH);
     let spaces = " ".repeat(max_content);
-    let mut lines: Vec<Line> = Vec::with_capacity(height);
+
+    struct RenderedLine {
+        line_num_str: String,
+        bg_color: Color,
+        code_spans: Vec<Span<'static>>,
+        visible_len: usize,
+    }
+
+    // First pass: build spans and compute max visible width in this viewport.
+    let mut rendered: Vec<RenderedLine> = Vec::with_capacity(height);
+    let mut max_visible_len = 0usize;
 
     for row in diff.render_rows(app.scroll_y, height) {
         // Extract line info based on pane side
@@ -453,6 +463,10 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         let line_num = line_ref.map(|l| l.line_num + 1);
         let content = line_ref.map(|l| l.content.as_str()).unwrap_or("");
         let inline_spans = line_ref.and_then(|l| l.inline_spans.as_ref());
+
+        let line_num_str = line_num
+            .map(|n| format!("{:>4}", n))
+            .unwrap_or_else(|| "    ".to_string());
 
         // Build syntax-highlighted content spans with truncation
         let mut code_spans: Vec<Span> = Vec::new();
@@ -566,50 +580,72 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             }
         }
 
+        max_visible_len = max_visible_len.max(visible_len);
+        rendered.push(RenderedLine {
+            line_num_str,
+            bg_color,
+            code_spans,
+            visible_len,
+        });
+    }
+
+    // For the pane with the gutter on the right (old/left), shift the whole code block right
+    // uniformly based on the widest visible line in this viewport. This keeps code "right
+    // adjusted" without per-line right-justification that breaks indentation.
+    let common_left_pad = if is_old {
+        max_content.saturating_sub(max_visible_len)
+    } else {
+        0
+    };
+
+    let mut lines: Vec<Line> = Vec::with_capacity(height);
+
+    for row in rendered {
         // Build the line with pane-specific layout:
-        // OLD (left):  [pad][code] │[line_num] - right-aligned, gutter on right
-        // NEW (right): [line_num]│ [code]     - left-aligned, gutter on left
+        // OLD (left):  [pad][code][pad] │[line_num] - right-adjusted block, gutter on right
+        // NEW (right): [line_num]│ [code][pad]      - left-aligned, gutter on left
         let mut spans: Vec<Span> = Vec::new();
-        let line_num_str = line_num
-            .map(|n| format!("{:>4}", n))
-            .unwrap_or_else(|| "    ".to_string());
 
         if is_old {
-            // Right-aligned: padding pushes code toward center
-            let pad_len = max_content.saturating_sub(visible_len);
-            if pad_len > 0 {
+            if common_left_pad > 0 {
                 spans.push(Span::styled(
-                    &spaces[..pad_len],
-                    Style::default().bg(bg_color),
+                    &spaces[..common_left_pad],
+                    Style::default().bg(row.bg_color),
                 ));
             }
-            spans.extend(code_spans);
-            // Separator + line number on right edge (inside)
+            spans.extend(row.code_spans);
+            let trailing = max_content
+                .saturating_sub(common_left_pad)
+                .saturating_sub(row.visible_len);
+            if trailing > 0 {
+                spans.push(Span::styled(
+                    &spaces[..trailing],
+                    Style::default().bg(row.bg_color),
+                ));
+            }
             spans.push(Span::styled(
                 " │",
-                Style::default().fg(GUTTER_SEP).bg(bg_color),
+                Style::default().fg(GUTTER_SEP).bg(row.bg_color),
             ));
             spans.push(Span::styled(
-                line_num_str,
-                Style::default().fg(TEXT_FAINT).bg(bg_color),
+                row.line_num_str,
+                Style::default().fg(TEXT_FAINT).bg(row.bg_color),
             ));
         } else {
-            // Left-aligned: line number + separator on left edge (inside)
             spans.push(Span::styled(
-                line_num_str,
-                Style::default().fg(TEXT_FAINT).bg(bg_color),
+                row.line_num_str,
+                Style::default().fg(TEXT_FAINT).bg(row.bg_color),
             ));
             spans.push(Span::styled(
                 "│ ",
-                Style::default().fg(GUTTER_SEP).bg(bg_color),
+                Style::default().fg(GUTTER_SEP).bg(row.bg_color),
             ));
-            spans.extend(code_spans);
-            // Trailing padding
-            let pad_len = max_content.saturating_sub(visible_len);
-            if pad_len > 0 {
+            spans.extend(row.code_spans);
+            let trailing = max_content.saturating_sub(row.visible_len);
+            if trailing > 0 {
                 spans.push(Span::styled(
-                    &spaces[..pad_len],
-                    Style::default().bg(bg_color),
+                    &spaces[..trailing],
+                    Style::default().bg(row.bg_color),
                 ));
             }
         }

@@ -114,3 +114,19 @@ Falls back to plain text for unsupported extensions.
 - Handles renames and copies (both treated as rename)
 - Lazy-loads file content from HEAD only when selected
 - Gracefully handles directories/symlinks (empty content)
+
+## Local Install (`~/commands`)
+
+If `quickdiff` is invoked from `~/commands`, update the binary after changes:
+
+```bash
+cargo build --release
+install -m 755 target/release/quickdiff ~/commands/quickdiff
+```
+
+Sanity check:
+
+```bash
+which quickdiff
+quickdiff --version
+```
