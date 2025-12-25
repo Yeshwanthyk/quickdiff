@@ -65,7 +65,7 @@ fn main() -> ExitCode {
     // Check for comments subcommand first (before clap parsing)
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("comments") {
-        return run_cli_comments(&args[2..].iter().map(|s| s.clone()).collect::<Vec<_>>());
+        return run_cli_comments(&args[2..]);
     }
 
     // Parse CLI args
@@ -103,8 +103,16 @@ fn parse_diff_source(cli: &Cli) -> DiffSource {
             // Handle ... (three dots) as well
             let to = to.strip_prefix('.').unwrap_or(to);
             return DiffSource::Range {
-                from: if from.is_empty() { "HEAD".to_string() } else { from.to_string() },
-                to: if to.is_empty() { "HEAD".to_string() } else { to.to_string() },
+                from: if from.is_empty() {
+                    "HEAD".to_string()
+                } else {
+                    from.to_string()
+                },
+                to: if to.is_empty() {
+                    "HEAD".to_string()
+                } else {
+                    to.to_string()
+                },
             };
         }
 
