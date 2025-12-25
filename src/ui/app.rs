@@ -443,6 +443,12 @@ impl App {
                     self.new_buffer = Some(new_buffer.clone());
                     self.diff = diff;
 
+                    if let Some(diff) = self.diff.as_ref() {
+                        if let Some(first) = diff.hunks().first() {
+                            self.scroll_y = first.start_row;
+                        }
+                    }
+
                     // Compute scopes for sticky line display
                     if !is_binary {
                         let lang = self.current_lang;
