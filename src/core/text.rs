@@ -108,8 +108,14 @@ impl TextBuffer {
 
 /// Normalize CRLF to LF.
 fn normalize_crlf(input: &[u8]) -> Vec<u8> {
+    let Some(first_cr) = input.iter().position(|&b| b == b'\r') else {
+        return input.to_vec();
+    };
+
     let mut output = Vec::with_capacity(input.len());
-    let mut i = 0;
+    output.extend_from_slice(&input[..first_cr]);
+
+    let mut i = first_cr;
     while i < input.len() {
         if i + 1 < input.len() && input[i] == b'\r' && input[i + 1] == b'\n' {
             output.push(b'\n');
