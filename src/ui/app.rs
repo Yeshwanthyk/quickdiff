@@ -7,7 +7,7 @@ use crate::core::{
     list_changed_files_between, list_changed_files_from_base_with_merge_base, list_commit_files,
     resolve_revision, selector_from_hunk, Anchor, ChangedFile, CommentContext, CommentStatus,
     CommentStore, DiffResult, DiffSource, FileCommentStore, FileViewedStore, RelPath, RepoRoot,
-    Selector, TextBuffer, ViewedStore,
+    RepoWatcher, Selector, TextBuffer, ViewedStore,
 };
 use crate::highlight::{HighlighterCache, LanguageId};
 use crate::theme::Theme;
@@ -135,6 +135,10 @@ pub struct App {
     pub theme_selector_idx: usize,
     /// Original theme name (for cancel).
     pub theme_original: String,
+
+    // File watching
+    /// File system watcher for live reload.
+    watcher: Option<RepoWatcher>,
 }
 
 fn comment_context_for_source(source: &DiffSource) -> CommentContext {
@@ -254,7 +258,19 @@ impl App {
             theme_list: Theme::list(),
             theme_selector_idx: 0,
             theme_original: theme_name.unwrap_or("default").to_string(),
+            watcher: None,
         };
+
+        // Initialize file watcher for live-reload modes (WorkingTree, Base)
+        if matches!(app.source, DiffSource::WorkingTree | DiffSource::Base(_)) {
+            match RepoWatcher::new(&app.repo) {
+                Ok(w) => app.watcher = Some(w),
+                Err(e) => {
+                    // Non-fatal: just log and continue without watching
+                    eprintln!("Warning: file watching disabled: {}", e);
+                }
+            }
+        }
 
         // Restore last selected file if available (only for working tree mode)
         if matches!(app.source, DiffSource::WorkingTree) {
@@ -1078,6 +1094,104 @@ impl App {
     pub fn theme_apply(&mut self) {
         self.theme_original = self.theme_list[self.theme_selector_idx].clone();
         self.mode = Mode::Normal;
+        self.dirty = true;
+    }
+
+    // ========================================================================
+    // File watching
+    // ========================================================================
+
+    /// Poll the file watcher for changes.
+    ///
+    /// Returns `true` if files changed and refresh is needed.
+    pub fn poll_watcher(&mut self) -> bool {
+        let Some(ref watcher) = self.watcher else {
+            return false;
+        };
+
+        if watcher.poll().is_some() {
+            self.refresh_file_list();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Refresh the file list from disk.
+    ///
+    /// Preserves selection if the file still exists, otherwise resets.
+    /// Re-requests diff for current file if it changed.
+    fn refresh_file_list(&mut self) {
+        // Remember current selection
+        let current_path = self.selected_file().map(|f| f.path.clone());
+
+        // Reload files based on diff source
+        let new_files = match &self.source {
+            DiffSource::WorkingTree => list_changed_files(&self.repo).ok(),
+            DiffSource::Base(base) => {
+                list_changed_files_from_base_with_merge_base(&self.repo, base)
+                    .ok()
+                    .map(|r| {
+                        // Update cached merge base
+                        self.cached_merge_base = Some(r.merge_base);
+                        r.files
+                    })
+            }
+            // Commit/Range modes don't need refresh (historical data)
+            DiffSource::Commit(_) | DiffSource::Range { .. } => return,
+        };
+
+        let Some(mut files) = new_files else {
+            return;
+        };
+
+        // Apply file filter if set
+        if let Some(ref filter) = self.file_filter {
+            files.retain(|f| f.path.as_str().contains(filter));
+        }
+
+        // Update file list
+        self.files = files;
+
+        // Restore selection if file still exists
+        if let Some(ref path) = current_path {
+            if let Some(idx) = self.files.iter().position(|f| &f.path == path) {
+                self.selected_idx = idx;
+                // Re-request diff (file content may have changed)
+                self.request_current_diff();
+            } else {
+                // File removed - select next valid or first
+                self.selected_idx = self.selected_idx.min(self.files.len().saturating_sub(1));
+                if !self.files.is_empty() {
+                    self.request_current_diff();
+                } else {
+                    self.diff = None;
+                    self.old_buffer = None;
+                    self.new_buffer = None;
+                }
+            }
+        } else if !self.files.is_empty() {
+            self.selected_idx = 0;
+            self.request_current_diff();
+        }
+
+        // Update viewed count
+        self.viewed_in_changeset = self
+            .files
+            .iter()
+            .filter(|f| self.viewed.is_viewed(&f.path))
+            .count();
+
+        // Update open comment counts
+        self.open_comment_counts = load_open_comment_counts(&self.repo, &self.comment_context);
+
+        // Clear filter (file indices may have shifted)
+        if !self.filtered_indices.is_empty() {
+            self.filtered_indices.clear();
+            self.sidebar_filter.clear();
+        }
+
+        self.status_msg = Some("Refreshed".to_string());
         self.dirty = true;
     }
 }

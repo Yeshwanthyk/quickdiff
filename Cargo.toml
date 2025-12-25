@@ -32,6 +32,10 @@ thiserror = "2"
 dirs = "6.0.0"
 parking_lot = "0.12.5"
 
+# File watching
+notify = "6"
+notify-debouncer-mini = "0.4"
+
 [features]
 default = ["lang-rust", "lang-typescript"]
 lang-rust = ["dep:tree-sitter-rust"]
