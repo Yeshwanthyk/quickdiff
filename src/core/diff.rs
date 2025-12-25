@@ -120,9 +120,18 @@ impl DiffResult {
     /// Find the hunk containing a given row.
     /// Returns the hunk index (0-based) or None if row is not within any hunk.
     pub fn hunk_at_row(&self, row: usize) -> Option<usize> {
-        self.hunks
-            .iter()
-            .position(|h| row >= h.start_row && row < h.start_row + h.row_count)
+        let idx = self.hunks.partition_point(|h| h.start_row <= row);
+        if idx == 0 {
+            return None;
+        }
+
+        let candidate_idx = idx - 1;
+        let h = &self.hunks[candidate_idx];
+        if row < h.start_row + h.row_count {
+            Some(candidate_idx)
+        } else {
+            None
+        }
     }
 }
 
@@ -147,10 +156,10 @@ enum Change {
 /// Compute the diff with context lines.
 /// Groups consecutive delete+insert runs into paired Replace rows.
 fn compute_diff(old: &TextBuffer, new: &TextBuffer, context: usize) -> DiffResult {
-    let old_lines: Vec<String> = old.lines().into_iter().map(|c| c.into_owned()).collect();
-    let new_lines: Vec<String> = new.lines().into_iter().map(|c| c.into_owned()).collect();
-    let old_refs: Vec<&str> = old_lines.iter().map(|s| s.as_str()).collect();
-    let new_refs: Vec<&str> = new_lines.iter().map(|s| s.as_str()).collect();
+    let old_lines = old.lines();
+    let new_lines = new.lines();
+    let old_refs: Vec<&str> = old_lines.iter().map(|s| s.as_ref()).collect();
+    let new_refs: Vec<&str> = new_lines.iter().map(|s| s.as_ref()).collect();
 
     let diff = TextDiff::from_slices(&old_refs, &new_refs);
 
@@ -188,7 +197,7 @@ fn compute_diff(old: &TextBuffer, new: &TextBuffer, context: usize) -> DiffResul
     }
 
     // Convert changes to rows, pairing deletes with inserts
-    let rows = pair_changes(&changes);
+    let rows = pair_changes(changes);
 
     // Build hunks from rows
     let hunks = build_hunks(&rows, context);
@@ -202,108 +211,128 @@ fn compute_diff(old: &TextBuffer, new: &TextBuffer, context: usize) -> DiffResul
 /// - Consecutive deletes and inserts are paired positionally (1st delete with 1st insert, etc.)
 /// - Paired lines get word-level inline diff highlighting
 /// - Unpaired lines (more deletes than inserts or vice versa) show as pure Delete/Insert
-fn pair_changes(changes: &[Change]) -> Vec<RenderRow> {
+fn pair_changes(changes: Vec<Change>) -> Vec<RenderRow> {
     let mut rows = Vec::new();
-    let mut i = 0;
+    let mut iter = changes.into_iter().peekable();
 
-    while i < changes.len() {
-        match &changes[i] {
+    while let Some(change) = iter.next() {
+        match change {
             Change::Equal {
                 old_line,
                 new_line,
                 content,
             } => {
+                let content_new = content.clone();
                 rows.push(RenderRow {
                     old: Some(LineRef {
-                        line_num: *old_line,
-                        content: content.clone(),
+                        line_num: old_line,
+                        content,
                         inline_spans: None,
                     }),
                     new: Some(LineRef {
-                        line_num: *new_line,
-                        content: content.clone(),
+                        line_num: new_line,
+                        content: content_new,
                         inline_spans: None,
                     }),
                     kind: ChangeKind::Equal,
                 });
-                i += 1;
             }
-            Change::Delete { .. } | Change::Insert { .. } => {
-                // Collect consecutive deletes and inserts
-                let mut deletes: Vec<&Change> = Vec::new();
-                let mut inserts: Vec<&Change> = Vec::new();
-
-                while i < changes.len() {
-                    match &changes[i] {
-                        Change::Delete { .. } => {
-                            deletes.push(&changes[i]);
-                            i += 1;
-                        }
-                        Change::Insert { .. } => {
-                            inserts.push(&changes[i]);
-                            i += 1;
-                        }
-                        Change::Equal { .. } => break,
-                    }
-                }
-
-                // Pair deletes with inserts positionally (side-by-side display)
-                let max_len = deletes.len().max(inserts.len());
-                for j in 0..max_len {
-                    let del = deletes.get(j);
-                    let ins = inserts.get(j);
-
-                    match (del, ins) {
-                        (Some(Change::Delete { old_line, content: old_content }),
-                         Some(Change::Insert { new_line, content: new_content })) => {
-                            // Both sides present - Replace with inline diff
-                            let (old_spans, new_spans) = compute_inline_diff(old_content, new_content);
-                            rows.push(RenderRow {
-                                old: Some(LineRef {
-                                    line_num: *old_line,
-                                    content: old_content.clone(),
-                                    inline_spans: old_spans,
-                                }),
-                                new: Some(LineRef {
-                                    line_num: *new_line,
-                                    content: new_content.clone(),
-                                    inline_spans: new_spans,
-                                }),
-                                kind: ChangeKind::Replace,
-                            });
-                        }
-                        (Some(Change::Delete { old_line, content }), None) => {
-                            // Only delete - no corresponding insert
-                            rows.push(RenderRow {
-                                old: Some(LineRef {
-                                    line_num: *old_line,
-                                    content: content.clone(),
-                                    inline_spans: None,
-                                }),
-                                new: None,
-                                kind: ChangeKind::Delete,
-                            });
-                        }
-                        (None, Some(Change::Insert { new_line, content })) => {
-                            // Only insert - no corresponding delete
-                            rows.push(RenderRow {
-                                old: None,
-                                new: Some(LineRef {
-                                    line_num: *new_line,
-                                    content: content.clone(),
-                                    inline_spans: None,
-                                }),
-                                kind: ChangeKind::Insert,
-                            });
-                        }
-                        _ => unreachable!(),
-                    }
-                }
+            Change::Delete { old_line, content } => {
+                let mut deletes = Vec::new();
+                let mut inserts = Vec::new();
+                deletes.push((old_line, content));
+                collect_change_run(&mut iter, &mut deletes, &mut inserts);
+                emit_paired_changes(deletes, inserts, &mut rows);
+            }
+            Change::Insert { new_line, content } => {
+                let mut deletes = Vec::new();
+                let mut inserts = Vec::new();
+                inserts.push((new_line, content));
+                collect_change_run(&mut iter, &mut deletes, &mut inserts);
+                emit_paired_changes(deletes, inserts, &mut rows);
             }
         }
     }
 
     rows
+}
+
+fn collect_change_run(
+    iter: &mut std::iter::Peekable<std::vec::IntoIter<Change>>,
+    deletes: &mut Vec<(usize, String)>,
+    inserts: &mut Vec<(usize, String)>,
+) {
+    while let Some(next) = iter.peek() {
+        match next {
+            Change::Delete { .. } => {
+                let Some(Change::Delete { old_line, content }) = iter.next() else {
+                    unreachable!();
+                };
+                deletes.push((old_line, content));
+            }
+            Change::Insert { .. } => {
+                let Some(Change::Insert { new_line, content }) = iter.next() else {
+                    unreachable!();
+                };
+                inserts.push((new_line, content));
+            }
+            Change::Equal { .. } => break,
+        }
+    }
+}
+
+fn emit_paired_changes(
+    deletes: Vec<(usize, String)>,
+    inserts: Vec<(usize, String)>,
+    rows: &mut Vec<RenderRow>,
+) {
+    let max_len = deletes.len().max(inserts.len());
+    let mut del_iter = deletes.into_iter();
+    let mut ins_iter = inserts.into_iter();
+
+    for _ in 0..max_len {
+        match (del_iter.next(), ins_iter.next()) {
+            (Some((old_line, old_content)), Some((new_line, new_content))) => {
+                let (old_spans, new_spans) = compute_inline_diff(&old_content, &new_content);
+                rows.push(RenderRow {
+                    old: Some(LineRef {
+                        line_num: old_line,
+                        content: old_content,
+                        inline_spans: old_spans,
+                    }),
+                    new: Some(LineRef {
+                        line_num: new_line,
+                        content: new_content,
+                        inline_spans: new_spans,
+                    }),
+                    kind: ChangeKind::Replace,
+                });
+            }
+            (Some((old_line, content)), None) => {
+                rows.push(RenderRow {
+                    old: Some(LineRef {
+                        line_num: old_line,
+                        content,
+                        inline_spans: None,
+                    }),
+                    new: None,
+                    kind: ChangeKind::Delete,
+                });
+            }
+            (None, Some((new_line, content))) => {
+                rows.push(RenderRow {
+                    old: None,
+                    new: Some(LineRef {
+                        line_num: new_line,
+                        content,
+                        inline_spans: None,
+                    }),
+                    kind: ChangeKind::Insert,
+                });
+            }
+            (None, None) => break,
+        }
+    }
 }
 
 /// Max line length for computing inline diff (skip for very long lines).
@@ -445,33 +474,37 @@ fn build_hunks(rows: &[RenderRow], context: usize) -> Vec<Hunk> {
 fn make_hunk(rows: &[RenderRow], start: usize, end: usize) -> Hunk {
     let slice = &rows[start..end];
 
-    let old_start = slice
-        .iter()
-        .filter_map(|r| r.old.as_ref().map(|l| l.line_num))
-        .min()
-        .unwrap_or(0);
-    let old_end = slice
-        .iter()
-        .filter_map(|r| r.old.as_ref().map(|l| l.line_num))
-        .max()
-        .unwrap_or(0);
+    let mut old_min: Option<usize> = None;
+    let mut old_max: usize = 0;
+    let mut new_min: Option<usize> = None;
+    let mut new_max: usize = 0;
 
-    let new_start = slice
-        .iter()
-        .filter_map(|r| r.new.as_ref().map(|l| l.line_num))
-        .min()
-        .unwrap_or(0);
-    let new_end = slice
-        .iter()
-        .filter_map(|r| r.new.as_ref().map(|l| l.line_num))
-        .max()
-        .unwrap_or(0);
+    for row in slice {
+        if let Some(old) = row.old.as_ref() {
+            old_min = Some(old_min.map_or(old.line_num, |m| m.min(old.line_num)));
+            old_max = old_max.max(old.line_num);
+        }
+        if let Some(new) = row.new.as_ref() {
+            new_min = Some(new_min.map_or(new.line_num, |m| m.min(new.line_num)));
+            new_max = new_max.max(new.line_num);
+        }
+    }
+
+    let old_range = match old_min {
+        Some(min) => (min, old_max - min + 1),
+        None => (0, 0),
+    };
+
+    let new_range = match new_min {
+        Some(min) => (min, new_max - min + 1),
+        None => (0, 0),
+    };
 
     Hunk {
         start_row: start,
         row_count: end - start,
-        old_range: (old_start, old_end.saturating_sub(old_start) + 1),
-        new_range: (new_start, new_end.saturating_sub(new_start) + 1),
+        old_range,
+        new_range,
     }
 }
 
