@@ -413,25 +413,25 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
     let new_buffer = TextBuffer::new(&new_bytes);
     let diff = DiffResult::compute(&old_buffer, &new_buffer);
 
-    if diff.hunks.is_empty() {
+    if diff.hunks().is_empty() {
         eprintln!("No hunks found for {}", rel_path.as_str());
         return ExitCode::from(1);
     }
 
     let hunk_idx = match selector_arg {
         HunkSelectorArg::Index(idx) => {
-            if idx >= diff.hunks.len() {
+            if idx >= diff.hunks().len() {
                 eprintln!(
                     "Hunk {} does not exist (file has {} hunks)",
                     idx + 1,
-                    diff.hunks.len()
+                    diff.hunks().len()
                 );
                 return ExitCode::from(1);
             }
             idx
         }
         HunkSelectorArg::OldLine(old_line) => match diff
-            .hunks
+            .hunks()
             .iter()
             .position(|h| old_line >= h.old_range.0 && old_line < h.old_range.0 + h.old_range.1)
         {
@@ -442,7 +442,7 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
             }
         },
         HunkSelectorArg::NewLine(new_line) => match diff
-            .hunks
+            .hunks()
             .iter()
             .position(|h| new_line >= h.new_range.0 && new_line < h.new_range.0 + h.new_range.1)
         {
@@ -474,7 +474,7 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
     match store.add(rel_path, context, message, anchor) {
         Ok(id) => {
             let digest_prefix = diff
-                .hunks
+                .hunks()
                 .get(hunk_idx)
                 .map(|h| digest_hunk_changed_rows(&diff, h))
                 .map(|d| d[..8].to_string())

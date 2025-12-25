@@ -77,6 +77,7 @@ pub struct App {
     worker: DiffWorker,
     next_request_id: u64,
     pending_request_id: Option<u64>,
+    /// Whether a diff is currently being loaded.
     pub loading: bool,
 
     // Diff state (lazy loaded)
@@ -102,8 +103,11 @@ pub struct App {
     pub draft_comment: String,
     /// Comments to display in ViewComments mode.
     pub viewing_comments: Vec<CommentViewItem>,
+    /// Selected index in comment list.
     pub viewing_comments_selected: usize,
+    /// Scroll offset in comment list.
     pub viewing_comments_scroll: usize,
+    /// Whether to include resolved comments.
     pub viewing_include_resolved: bool,
     /// Sidebar filter query (when in FilterFiles mode).
     pub sidebar_filter: String,
@@ -299,7 +303,7 @@ impl App {
         }
 
         let mut digest_to_hunk_idx: HashMap<String, usize> = HashMap::new();
-        for (idx, h) in diff.hunks.iter().enumerate() {
+        for (idx, h) in diff.hunks().iter().enumerate() {
             digest_to_hunk_idx.insert(digest_hunk_changed_rows(diff, h), idx);
         }
 
@@ -591,7 +595,7 @@ impl App {
             return;
         };
 
-        if diff.hunks.is_empty() {
+        if diff.hunks().is_empty() {
             self.error_msg = Some("No hunks to comment on".to_string());
             self.dirty = true;
             return;
@@ -717,7 +721,7 @@ impl App {
 
         let mut digest_to_start_row: HashMap<String, usize> = HashMap::new();
         if let Some(diff) = &self.diff {
-            for h in &diff.hunks {
+            for h in diff.hunks() {
                 digest_to_start_row.insert(digest_hunk_changed_rows(diff, h), h.start_row);
             }
         }
@@ -792,6 +796,7 @@ impl App {
         self.dirty = true;
     }
 
+    /// Close the comments view and return to normal mode.
     pub fn close_comments(&mut self) {
         self.mode = Mode::Normal;
         self.viewing_comments.clear();
@@ -800,6 +805,7 @@ impl App {
         self.dirty = true;
     }
 
+    /// Select the next comment in the list.
     pub fn comments_select_next(&mut self) {
         if self.viewing_comments.is_empty() {
             return;
@@ -809,17 +815,20 @@ impl App {
         self.dirty = true;
     }
 
+    /// Select the previous comment in the list.
     pub fn comments_select_prev(&mut self) {
         self.viewing_comments_selected = self.viewing_comments_selected.saturating_sub(1);
         self.dirty = true;
     }
 
+    /// Toggle whether resolved comments are shown.
     pub fn comments_toggle_include_resolved(&mut self) {
         self.viewing_include_resolved = !self.viewing_include_resolved;
         self.refresh_viewing_comments();
         self.dirty = true;
     }
 
+    /// Jump to the selected comment's location in the diff.
     pub fn comments_jump_to_selected(&mut self) {
         if self.viewing_comments.is_empty() {
             return;
@@ -845,6 +854,7 @@ impl App {
         self.dirty = true;
     }
 
+    /// Resolve the currently selected comment.
     pub fn comments_resolve_selected(&mut self) {
         if self.viewing_comments.is_empty() {
             return;

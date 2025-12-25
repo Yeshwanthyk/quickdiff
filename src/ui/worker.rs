@@ -1,7 +1,7 @@
 //! Background worker for loading file content and computing diffs.
 
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 use crate::core::{load_diff_contents, ChangedFile, DiffResult, DiffSource, RepoRoot, TextBuffer};
 
@@ -28,21 +28,44 @@ pub(crate) enum DiffLoadResponse {
     },
 }
 
-#[derive(Debug)]
 pub(crate) struct DiffWorker {
     pub request_tx: Sender<DiffLoadRequest>,
     pub response_rx: Receiver<DiffLoadResponse>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for DiffWorker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiffWorker")
+            .field("request_tx", &self.request_tx)
+            .field("response_rx", &self.response_rx)
+            .field("handle", &self.handle.as_ref().map(|_| "..."))
+            .finish()
+    }
 }
 
 pub(crate) fn spawn_diff_worker(repo: RepoRoot) -> DiffWorker {
     let (request_tx, request_rx) = mpsc::channel::<DiffLoadRequest>();
     let (response_tx, response_rx) = mpsc::channel::<DiffLoadResponse>();
 
-    thread::spawn(move || worker_loop(repo, request_rx, response_tx));
+    let handle = thread::spawn(move || worker_loop(repo, request_rx, response_tx));
 
     DiffWorker {
         request_tx,
         response_rx,
+        handle: Some(handle),
+    }
+}
+
+impl Drop for DiffWorker {
+    fn drop(&mut self) {
+        // Dropping request_tx closes the channel, causing worker_loop to exit.
+        // We must drop it first (it's already being dropped), then join.
+        // The Sender is dropped automatically, so just join the thread.
+        if let Some(handle) = self.handle.take() {
+            // Don't panic if thread panicked — just ignore
+            let _ = handle.join();
+        }
     }
 }
 

@@ -11,8 +11,11 @@ use crate::core::{Anchor, Comment, CommentContext, CommentId, CommentStatus, Rel
 /// Persisted state schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommentsState {
+    /// Schema version for migration.
     pub version: u32,
+    /// Next available comment ID.
     pub next_id: CommentId,
+    /// All stored comments.
     pub comments: Vec<Comment>,
 }
 
@@ -170,6 +173,7 @@ pub struct MemoryCommentStore {
 }
 
 impl MemoryCommentStore {
+    /// Create a new empty in-memory store.
     pub fn new() -> Self {
         Self::default()
     }

@@ -7,18 +7,29 @@ use thiserror::Error;
 
 /// Errors from repository operations.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RepoError {
+    /// Path is not inside a git repository.
     #[error("not inside a git repository")]
     NotARepo,
+    /// Git command failed with an error message.
     #[error("git command failed: {0}")]
     GitError(String),
+    /// I/O error during git operation.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// Git output contained invalid UTF-8.
     #[error("invalid utf-8 in git output")]
     InvalidUtf8,
+    /// Invalid revision specified.
     #[error("invalid revision: {0}")]
     InvalidRevision(String),
 }
+
+/// Error when constructing a RelPath with an absolute path.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("path must be relative, got: {0}")]
+pub struct InvalidRelPath(pub String);
 
 /// Source specification for diff comparison.
 #[derive(Debug, Clone)]
@@ -28,7 +39,12 @@ pub enum DiffSource {
     /// Single commit (show changes introduced by that commit).
     Commit(String),
     /// Range of commits (from..to).
-    Range { from: String, to: String },
+    Range {
+        /// Starting commit.
+        from: String,
+        /// Ending commit.
+        to: String,
+    },
     /// Compare against a base ref (e.g., origin/main).
     Base(String),
 }
@@ -87,8 +103,22 @@ pub struct RelPath(String);
 
 impl RelPath {
     /// Create a new RelPath from a string.
-    /// Panics if the path is absolute.
-    pub fn new(path: impl Into<String>) -> Self {
+    ///
+    /// Returns an error if the path is absolute (starts with `/`).
+    pub fn try_new(path: impl Into<String>) -> Result<Self, InvalidRelPath> {
+        let path = path.into();
+        if path.starts_with('/') {
+            return Err(InvalidRelPath(path));
+        }
+        Ok(Self(path))
+    }
+
+    /// Create a new RelPath without validation.
+    ///
+    /// # Safety (logical)
+    /// Caller must ensure `path` is relative (does not start with `/`).
+    /// Used for trusted input from git commands.
+    pub fn new_unchecked(path: impl Into<String>) -> Self {
         let path = path.into();
         debug_assert!(
             !path.starts_with('/'),
@@ -96,6 +126,12 @@ impl RelPath {
             path
         );
         Self(path)
+    }
+
+    /// Convenience alias for `new_unchecked` — use when path is from git output.
+    #[inline]
+    pub fn new(path: impl Into<String>) -> Self {
+        Self::new_unchecked(path)
     }
 
     /// Get the path as a string slice.
@@ -131,24 +167,31 @@ impl std::fmt::Display for RelPath {
 /// Kind of file change detected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileChangeKind {
+    /// File was newly added.
     Added,
+    /// File was modified.
     Modified,
+    /// File was deleted.
     Deleted,
+    /// File is untracked.
     Untracked,
-    /// Renamed is best-effort; may show as delete+add.
+    /// File was renamed (best-effort; may show as delete+add).
     Renamed,
 }
 
 /// A changed file in the repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangedFile {
+    /// Path to the file.
     pub path: RelPath,
+    /// Type of change.
     pub kind: FileChangeKind,
     /// For renames, the original path.
     pub old_path: Option<RelPath>,
 }
 
 impl ChangedFile {
+    /// Create a new changed file entry.
     pub fn new(path: RelPath, kind: FileChangeKind) -> Self {
         Self {
             path,
@@ -157,6 +200,7 @@ impl ChangedFile {
         }
     }
 
+    /// Create a renamed file entry.
     pub fn renamed(old_path: RelPath, new_path: RelPath) -> Self {
         Self {
             path: new_path,
@@ -461,7 +505,9 @@ pub fn list_commit_files(root: &RepoRoot, commit: &str) -> Result<Vec<ChangedFil
 /// Result of a base comparison.
 #[derive(Debug, Clone)]
 pub struct BaseComparison {
+    /// The computed merge-base commit SHA.
     pub merge_base: String,
+    /// Files changed between merge-base and HEAD.
     pub files: Vec<ChangedFile>,
 }
 
@@ -589,6 +635,12 @@ mod tests {
         assert_eq!(p.as_str(), "src/main.rs");
         assert_eq!(p.extension(), Some("rs"));
         assert_eq!(p.file_name(), "main.rs");
+    }
+
+    #[test]
+    fn relpath_try_new_rejects_absolute() {
+        assert!(RelPath::try_new("/absolute/path").is_err());
+        assert!(RelPath::try_new("relative/path").is_ok());
     }
 
     #[test]

@@ -429,7 +429,7 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
 
-    if diff.rows.is_empty() || !diff.has_changes() {
+    if diff.rows().is_empty() || !diff.has_changes() {
         let msg =
             Paragraph::new("Files are identical").style(Style::default().fg(app.theme.text_muted));
         frame.render_widget(msg, inner);

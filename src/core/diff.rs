@@ -1,5 +1,7 @@
 //! Diff model and hunk navigation.
 
+use std::sync::Arc;
+
 use similar::{ChangeTag, TextDiff};
 
 use crate::core::TextBuffer;
@@ -67,10 +69,10 @@ pub struct Hunk {
 /// Complete diff result between two text buffers.
 #[derive(Debug, Clone)]
 pub struct DiffResult {
-    /// All render rows.
-    pub rows: Vec<RenderRow>,
+    /// All render rows (Arc for cheap cloning).
+    rows: Arc<[RenderRow]>,
     /// Hunk index for navigation (sorted by start_row).
-    pub hunks: Vec<Hunk>,
+    hunks: Arc<[Hunk]>,
 }
 
 impl DiffResult {
@@ -82,6 +84,16 @@ impl DiffResult {
     /// Compute diff with custom context lines.
     pub fn compute_with_context(old: &TextBuffer, new: &TextBuffer, context: usize) -> Self {
         compute_diff(old, new, context)
+    }
+
+    /// Get all render rows.
+    pub fn rows(&self) -> &[RenderRow] {
+        &self.rows
+    }
+
+    /// Get all hunks.
+    pub fn hunks(&self) -> &[Hunk] {
+        &self.hunks
     }
 
     /// Total number of render rows.
@@ -202,7 +214,10 @@ fn compute_diff(old: &TextBuffer, new: &TextBuffer, context: usize) -> DiffResul
     // Build hunks from rows
     let hunks = build_hunks(&rows, context);
 
-    DiffResult { rows, hunks }
+    DiffResult {
+        rows: rows.into(),
+        hunks: hunks.into(),
+    }
 }
 
 /// Convert changes to render rows.

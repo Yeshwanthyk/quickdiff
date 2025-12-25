@@ -16,11 +16,22 @@ pub enum CommentContext {
     /// HEAD vs working tree.
     Worktree,
     /// Merge-base(base, HEAD) vs working tree.
-    Base { base: String },
+    Base {
+        /// The base ref (e.g., "origin/main").
+        base: String,
+    },
     /// Parent(commit) vs commit.
-    Commit { commit: String },
+    Commit {
+        /// The commit SHA.
+        commit: String,
+    },
     /// from..to comparison.
-    Range { from: String, to: String },
+    Range {
+        /// Starting commit.
+        from: String,
+        /// Ending commit.
+        to: String,
+    },
 }
 
 impl Default for CommentContext {
@@ -46,22 +57,32 @@ impl CommentContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CommentStatus {
+    /// Comment is unresolved.
     Open,
+    /// Comment has been resolved.
     Resolved,
 }
 
 /// A hunk-level comment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Comment {
+    /// Unique identifier.
     pub id: CommentId,
+    /// Path to the file.
     pub path: RelPath,
+    /// Context in which the comment was created.
     #[serde(default, skip_serializing_if = "CommentContext::is_unscoped")]
     pub context: CommentContext,
+    /// Comment text.
     pub message: String,
+    /// Current status.
     pub status: CommentStatus,
+    /// Location anchor.
     pub anchor: Anchor,
+    /// Creation timestamp (milliseconds since epoch).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at_ms: Option<u64>,
+    /// Resolution timestamp (milliseconds since epoch).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_at_ms: Option<u64>,
 }
@@ -69,6 +90,7 @@ pub struct Comment {
 /// Anchor describing where a comment is attached.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Anchor {
+    /// Selectors for locating the comment (tried in order).
     pub selectors: Vec<Selector>,
 }
 
@@ -76,6 +98,7 @@ pub struct Anchor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Selector {
+    /// V1 hunk-based selector using line ranges and content digest.
     DiffHunkV1(DiffHunkSelectorV1),
 }
 
@@ -92,7 +115,7 @@ pub struct DiffHunkSelectorV1 {
 
 /// Build a selector from a hunk in a diff.
 pub fn selector_from_hunk(diff: &DiffResult, hunk_idx: usize) -> Option<DiffHunkSelectorV1> {
-    let hunk = diff.hunks.get(hunk_idx)?;
+    let hunk = diff.hunks().get(hunk_idx)?;
     let digest = digest_hunk_changed_rows(diff, hunk);
     Some(DiffHunkSelectorV1 {
         old_range: hunk.old_range,
@@ -113,7 +136,7 @@ pub fn digest_hunk_changed_rows(diff: &DiffResult, hunk: &Hunk) -> String {
     let start = hunk.start_row;
     let end = start + hunk.row_count;
 
-    for row in diff.rows.iter().skip(start).take(end - start) {
+    for row in diff.rows().iter().skip(start).take(end - start) {
         match row.kind {
             ChangeKind::Delete | ChangeKind::Replace => {
                 if let Some(ref old) = row.old {
@@ -174,9 +197,9 @@ mod tests {
         let diff1 = DiffResult::compute(&old, &new);
         let diff2 = DiffResult::compute(&old, &new);
 
-        assert!(!diff1.hunks.is_empty());
-        let d1 = digest_hunk_changed_rows(&diff1, &diff1.hunks[0]);
-        let d2 = digest_hunk_changed_rows(&diff2, &diff2.hunks[0]);
+        assert!(!diff1.hunks().is_empty());
+        let d1 = digest_hunk_changed_rows(&diff1, &diff1.hunks()[0]);
+        let d2 = digest_hunk_changed_rows(&diff2, &diff2.hunks()[0]);
         assert_eq!(d1, d2);
         assert_eq!(d1.len(), 16); // 64-bit hex
     }

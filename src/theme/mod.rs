@@ -6,7 +6,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// A complete theme definition.
+///
+/// All fields are public for direct access. Field names are self-documenting
+/// (e.g., `bg_dark` = dark background, `text_muted` = muted text color).
 #[derive(Debug, Clone)]
+#[allow(missing_docs)]
 pub struct Theme {
     // Base colors
     pub bg_dark: Color,
@@ -61,14 +65,17 @@ pub struct Theme {
 
 /// JSON theme file format.
 #[derive(Debug, Deserialize)]
+#[allow(missing_docs)]
 pub struct ThemeJson {
     #[serde(default)]
     pub defs: HashMap<String, String>,
     pub theme: ThemeColorsJson,
 }
 
+/// Theme color definitions from JSON.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(missing_docs)]
 pub struct ThemeColorsJson {
     // Base
     pub bg_dark: Option<String>,

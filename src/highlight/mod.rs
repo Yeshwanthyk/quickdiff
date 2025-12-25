@@ -8,11 +8,22 @@ use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter 
 /// Language identifier for syntax highlighting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LanguageId {
+    /// Rust source files.
+    #[cfg(feature = "lang-rust")]
     Rust,
+    /// TypeScript source files.
+    #[cfg(feature = "lang-typescript")]
     TypeScript,
+    /// TypeScript with JSX.
+    #[cfg(feature = "lang-typescript")]
     TypeScriptReact,
+    /// JavaScript source files.
+    #[cfg(feature = "lang-typescript")]
     JavaScript,
+    /// JavaScript with JSX.
+    #[cfg(feature = "lang-typescript")]
     JavaScriptReact,
+    /// Plain text (no highlighting).
     Plain,
 }
 
@@ -20,10 +31,15 @@ impl LanguageId {
     /// Detect language from file extension.
     pub fn from_extension(ext: &str) -> Self {
         match ext.to_lowercase().as_str() {
+            #[cfg(feature = "lang-rust")]
             "rs" => Self::Rust,
+            #[cfg(feature = "lang-typescript")]
             "ts" => Self::TypeScript,
+            #[cfg(feature = "lang-typescript")]
             "tsx" => Self::TypeScriptReact,
+            #[cfg(feature = "lang-typescript")]
             "js" | "mjs" | "cjs" => Self::JavaScript,
+            #[cfg(feature = "lang-typescript")]
             "jsx" => Self::JavaScriptReact,
             _ => Self::Plain,
         }
@@ -33,8 +49,9 @@ impl LanguageId {
 /// A styled span in highlighted text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StyledSpan {
-    /// Byte range within the line.
+    /// Byte start offset in the source.
     pub start: usize,
+    /// Byte end offset in the source.
     pub end: usize,
     /// Style identifier (maps to a palette).
     pub style_id: StyleId,
@@ -43,19 +60,32 @@ pub struct StyledSpan {
 /// Style identifiers for highlighting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum StyleId {
+    /// Default/unstyled text.
     #[default]
     Default,
+    /// Language keywords.
     Keyword,
+    /// Type names.
     Type,
+    /// Function names.
     Function,
+    /// String literals.
     String,
+    /// Numeric literals.
     Number,
+    /// Comments.
     Comment,
+    /// Operators.
     Operator,
+    /// Punctuation.
     Punctuation,
+    /// Variable names.
     Variable,
+    /// Constants.
     Constant,
+    /// Property access.
     Property,
+    /// Attributes/decorators.
     Attribute,
 }
 
@@ -133,19 +163,23 @@ impl TreeSitterHighlighter {
     /// Create a new highlighter for the given language.
     pub fn new(lang: LanguageId) -> Option<Self> {
         let (language, highlights_query) = match lang {
+            #[cfg(feature = "lang-rust")]
             LanguageId::Rust => (
                 tree_sitter_rust::LANGUAGE.into(),
                 tree_sitter_rust::HIGHLIGHTS_QUERY,
             ),
+            #[cfg(feature = "lang-typescript")]
             LanguageId::TypeScript | LanguageId::JavaScript => (
                 tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                 tree_sitter_typescript::HIGHLIGHTS_QUERY,
             ),
+            #[cfg(feature = "lang-typescript")]
             LanguageId::TypeScriptReact | LanguageId::JavaScriptReact => (
                 tree_sitter_typescript::LANGUAGE_TSX.into(),
                 tree_sitter_typescript::HIGHLIGHTS_QUERY,
             ),
-            LanguageId::Plain => return None,
+            // Plain or disabled languages
+            _ => return None,
         };
 
         let mut config =
@@ -241,6 +275,7 @@ impl Default for HighlighterCache {
 }
 
 impl HighlighterCache {
+    /// Create a new empty highlighter cache.
     pub fn new() -> Self {
         Self {
             highlighters: std::cell::RefCell::new(HashMap::new()),
@@ -273,12 +308,15 @@ mod tests {
 
     #[test]
     fn language_detection() {
+        #[cfg(feature = "lang-rust")]
         assert_eq!(LanguageId::from_extension("rs"), LanguageId::Rust);
+        #[cfg(feature = "lang-typescript")]
         assert_eq!(
             LanguageId::from_extension("tsx"),
             LanguageId::TypeScriptReact
         );
         assert_eq!(LanguageId::from_extension("txt"), LanguageId::Plain);
+        #[cfg(feature = "lang-rust")]
         assert_eq!(LanguageId::from_extension("RS"), LanguageId::Rust);
     }
 
@@ -291,6 +329,7 @@ mod tests {
         assert_eq!(spans[0].end, 11);
     }
 
+    #[cfg(feature = "lang-rust")]
     #[test]
     fn rust_highlighter() {
         let hl = TreeSitterHighlighter::new(LanguageId::Rust).unwrap();
@@ -304,6 +343,7 @@ mod tests {
         assert!(has_keyword, "Expected keyword highlight for 'fn'");
     }
 
+    #[cfg(feature = "lang-typescript")]
     #[test]
     fn typescript_highlighter() {
         let hl = TreeSitterHighlighter::new(LanguageId::TypeScript).unwrap();
@@ -325,13 +365,16 @@ mod tests {
     fn highlighter_cache() {
         let cache = HighlighterCache::new();
 
-        // First access creates highlighter
-        let spans = cache.highlight(LanguageId::Rust, "fn main() {}");
-        assert!(!spans.is_empty());
+        #[cfg(feature = "lang-rust")]
+        {
+            // First access creates highlighter
+            let spans = cache.highlight(LanguageId::Rust, "fn main() {}");
+            assert!(!spans.is_empty());
 
-        // Second access reuses it (no panic)
-        let spans = cache.highlight(LanguageId::Rust, "let x = 1;");
-        assert!(!spans.is_empty());
+            // Second access reuses it (no panic)
+            let spans = cache.highlight(LanguageId::Rust, "let x = 1;");
+            assert!(!spans.is_empty());
+        }
 
         // Plain always works
         let spans = cache.highlight(LanguageId::Plain, "hello");

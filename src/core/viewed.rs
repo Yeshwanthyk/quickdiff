@@ -2,10 +2,23 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
 use crate::core::RelPath;
+
+/// Cached config directory path.
+static CONFIG_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// Get the quickdiff config directory (cached).
+fn config_dir() -> &'static std::path::Path {
+    CONFIG_DIR.get_or_init(|| {
+        directories::ProjectDirs::from("", "", "quickdiff")
+            .map(|d| d.config_dir().to_path_buf())
+            .unwrap_or_else(dirs_fallback)
+    })
+}
 
 /// Trait for viewed state storage.
 pub trait ViewedStore {
@@ -40,6 +53,7 @@ pub struct MemoryViewedStore {
 }
 
 impl MemoryViewedStore {
+    /// Create a new empty in-memory store.
     pub fn new() -> Self {
         Self::default()
     }
@@ -66,20 +80,27 @@ impl ViewedStore for MemoryViewedStore {
 /// Persisted state schema.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PersistedState {
+    /// Schema version for migration.
     pub version: u32,
+    /// Per-repository state, keyed by repo path.
     pub repos: std::collections::HashMap<String, RepoState>,
 }
 
+/// Per-repository viewed state.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RepoState {
+    /// List of viewed file paths.
     pub viewed: Vec<String>,
+    /// Last selected file path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_selected: Option<String>,
 }
 
 impl PersistedState {
+    /// Current schema version.
     pub const VERSION: u32 = 1;
 
+    /// Create a new empty persisted state.
     pub fn new() -> Self {
         Self {
             version: Self::VERSION,
@@ -130,11 +151,7 @@ impl FileViewedStore {
 
     /// Get the default state file path.
     fn default_state_path() -> std::io::Result<std::path::PathBuf> {
-        let config_dir = directories::ProjectDirs::from("", "", "quickdiff")
-            .map(|d| d.config_dir().to_path_buf())
-            .unwrap_or_else(dirs_fallback);
-
-        Ok(config_dir.join("state.json"))
+        Ok(config_dir().join("state.json"))
     }
 
     /// Load state from disk.

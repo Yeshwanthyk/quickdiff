@@ -17,8 +17,8 @@ similar = "2.6"
 # Highlighting
 tree-sitter = "0.24"
 tree-sitter-highlight = "0.24"
-tree-sitter-rust = "0.23"
-tree-sitter-typescript = "0.23"
+tree-sitter-rust = { version = "0.23", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
 
 # Persistence
 directories = "5"
@@ -29,6 +29,11 @@ serde_json = "1"
 anyhow = "1"
 thiserror = "2"
 dirs = "6.0.0"
+
+[features]
+default = ["lang-rust", "lang-typescript"]
+lang-rust = ["dep:tree-sitter-rust"]
+lang-typescript = ["dep:tree-sitter-typescript"]
 
 [dev-dependencies]
 tempfile = "3"
