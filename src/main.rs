@@ -207,6 +207,8 @@ fn run_tui(source: DiffSource, file_filter: Option<String>) -> Result<()> {
 
 fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
     loop {
+        app.poll_worker();
+
         // Only redraw if dirty or on resize
         if app.dirty {
             terminal.draw(|frame| render(frame, app))?;

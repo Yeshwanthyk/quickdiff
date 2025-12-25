@@ -1,12 +1,13 @@
 //! Application state and lifecycle.
 
 use crate::core::{
-    diff_source_display, get_parent_revision, list_changed_files, list_changed_files_between,
-    list_changed_files_from_base_with_merge_base, list_commit_files, load_head_content,
-    load_revision_content, load_working_content, ChangedFile, DiffResult, DiffSource,
-    FileChangeKind, FileViewedStore, RepoRoot, TextBuffer, ViewedStore,
+    diff_source_display, list_changed_files, list_changed_files_between,
+    list_changed_files_from_base_with_merge_base, list_commit_files, ChangedFile, DiffResult,
+    DiffSource, FileViewedStore, RepoRoot, TextBuffer, ViewedStore,
 };
 use crate::highlight::{HighlighterCache, LanguageId};
+
+use super::worker::{spawn_diff_worker, DiffLoadRequest, DiffLoadResponse, DiffWorker};
 
 /// Focus state for the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +49,12 @@ pub struct App {
     pub viewed_in_changeset: usize,
     /// Should the app quit?
     pub should_quit: bool,
+
+    // Background diff loading
+    worker: DiffWorker,
+    next_request_id: u64,
+    pending_request_id: Option<u64>,
+    pub loading: bool,
 
     // Diff state (lazy loaded)
     /// Current file's diff result.
@@ -112,6 +119,8 @@ impl App {
         let viewed = FileViewedStore::new(repo.as_str())?;
         let viewed_in_changeset = files.iter().filter(|f| viewed.is_viewed(&f.path)).count();
 
+        let worker = spawn_diff_worker(repo.clone());
+
         let mut app = Self {
             repo,
             source,
@@ -124,6 +133,10 @@ impl App {
             viewed,
             viewed_in_changeset,
             should_quit: false,
+            worker,
+            next_request_id: 1,
+            pending_request_id: None,
+            loading: false,
             diff: None,
             old_buffer: None,
             new_buffer: None,
@@ -151,7 +164,7 @@ impl App {
 
         // Load initial diff if there are files
         if !app.files.is_empty() {
-            app.load_current_diff();
+            app.request_current_diff();
         }
 
         Ok(app)
@@ -167,201 +180,103 @@ impl App {
         self.files.get(self.selected_idx)
     }
 
-    /// Load diff for the currently selected file.
-    /// Errors are stored in error_msg rather than propagated.
-    pub fn load_current_diff(&mut self) {
+    /// Request diff for the currently selected file.
+    ///
+    /// Work is performed on a background thread. Call `poll_worker()` to apply results.
+    pub fn request_current_diff(&mut self) {
         self.error_msg = None;
+        self.status_msg = None;
         self.is_binary = false;
 
-        let Some(file) = self.selected_file() else {
+        let Some(file) = self.selected_file().cloned() else {
             self.diff = None;
             self.old_buffer = None;
             self.new_buffer = None;
+            self.pending_request_id = None;
+            self.loading = false;
             return;
         };
 
-        // Clone what we need to avoid borrow issues
-        let path = file.path.clone();
-        let kind = file.kind;
-        let old_path = file.old_path.clone();
-        let source = self.source.clone();
-
         // Detect language for highlighting
-        self.current_lang = path
+        self.current_lang = file
+            .path
             .extension()
             .map(LanguageId::from_extension)
             .unwrap_or(LanguageId::Plain);
 
-        // Load content based on diff source and change kind
-        let (old_bytes, new_bytes) = match source {
-            DiffSource::WorkingTree => {
-                // Working tree: compare HEAD to working directory
-                self.load_working_tree_content(&path, kind, old_path.as_ref())
-            }
-            DiffSource::Commit(ref commit) => {
-                // Single commit: compare parent to commit
-                self.load_commit_content(commit, &path, kind, old_path.as_ref())
-            }
-            DiffSource::Range { ref from, ref to } => {
-                // Range: compare from to to
-                self.load_range_content(from, to, &path, kind, old_path.as_ref())
-            }
-            DiffSource::Base(ref base) => {
-                // Base: compare merge-base to working tree
-                let merge_base = self.cached_merge_base.as_deref().unwrap_or(base.as_str());
-                self.load_base_content(merge_base, &path, kind, old_path.as_ref())
-            }
-        };
-
-        let (old_bytes, new_bytes) = match (old_bytes, new_bytes) {
-            (Ok(old), Ok(new)) => (old, new),
-            (Err(e), _) | (_, Err(e)) => {
-                self.error_msg = Some(format!("Failed to load content: {}", e));
-                return;
-            }
-        };
-
-        let old_buffer = TextBuffer::new(&old_bytes);
-        let new_buffer = TextBuffer::new(&new_bytes);
-
-        // Check for binary content
-        self.is_binary = old_buffer.is_binary() || new_buffer.is_binary();
-
-        let diff = DiffResult::compute(&old_buffer, &new_buffer);
-
-        self.old_buffer = Some(old_buffer);
-        self.new_buffer = Some(new_buffer);
-        self.diff = Some(diff);
+        // Clear existing state immediately so UI reflects selection changes.
+        self.diff = None;
+        self.old_buffer = None;
+        self.new_buffer = None;
         self.scroll_y = 0;
         self.scroll_x = 0;
+
+        let id = self.next_request_id;
+        self.next_request_id = self.next_request_id.wrapping_add(1);
+        self.pending_request_id = Some(id);
+        self.loading = true;
         self.dirty = true;
+
+        let req = DiffLoadRequest {
+            id,
+            source: self.source.clone(),
+            cached_merge_base: self.cached_merge_base.clone(),
+            file: file.clone(),
+        };
+
+        if self.worker.request_tx.send(req).is_err() {
+            self.error_msg = Some("Diff worker stopped".to_string());
+            self.loading = false;
+            self.pending_request_id = None;
+            self.dirty = true;
+            return;
+        }
 
         // Update last selected (only for working tree mode)
         if matches!(self.source, DiffSource::WorkingTree) {
             self.viewed
-                .set_last_selected(Some(path.as_str().to_string()));
+                .set_last_selected(Some(file.path.as_str().to_string()));
         }
     }
 
-    /// Load content for working tree diff (HEAD vs working directory).
-    fn load_working_tree_content(
-        &self,
-        path: &crate::core::RelPath,
-        kind: FileChangeKind,
-        old_path: Option<&crate::core::RelPath>,
-    ) -> (
-        Result<Vec<u8>, crate::core::RepoError>,
-        Result<Vec<u8>, crate::core::RepoError>,
-    ) {
-        match kind {
-            FileChangeKind::Added | FileChangeKind::Untracked => {
-                (Ok(Vec::new()), load_working_content(&self.repo, path))
-            }
-            FileChangeKind::Deleted => (load_head_content(&self.repo, path), Ok(Vec::new())),
-            FileChangeKind::Modified | FileChangeKind::Renamed => {
-                let old_p = old_path.unwrap_or(path);
-                (
-                    load_head_content(&self.repo, old_p),
-                    load_working_content(&self.repo, path),
-                )
-            }
-        }
-    }
+    /// Apply any completed diff loads.
+    pub fn poll_worker(&mut self) {
+        while let Ok(msg) = self.worker.response_rx.try_recv() {
+            match msg {
+                DiffLoadResponse::Loaded {
+                    id,
+                    old_buffer,
+                    new_buffer,
+                    diff,
+                    is_binary,
+                } => {
+                    if self.pending_request_id != Some(id) {
+                        continue;
+                    }
 
-    /// Load content for a single commit diff (parent vs commit).
-    fn load_commit_content(
-        &self,
-        commit: &str,
-        path: &crate::core::RelPath,
-        kind: FileChangeKind,
-        old_path: Option<&crate::core::RelPath>,
-    ) -> (
-        Result<Vec<u8>, crate::core::RepoError>,
-        Result<Vec<u8>, crate::core::RepoError>,
-    ) {
-        let parent = match get_parent_revision(&self.repo, commit) {
-            Ok(p) => p,
-            Err(e) => {
-                let err_msg = e.to_string();
-                return (
-                    Err(crate::core::RepoError::GitError(err_msg.clone())),
-                    Err(crate::core::RepoError::GitError(err_msg)),
-                );
-            }
-        };
+                    self.pending_request_id = None;
+                    self.loading = false;
+                    self.error_msg = None;
 
-        match kind {
-            FileChangeKind::Added => (
-                Ok(Vec::new()),
-                load_revision_content(&self.repo, commit, path),
-            ),
-            FileChangeKind::Deleted => (
-                load_revision_content(&self.repo, &parent, path),
-                Ok(Vec::new()),
-            ),
-            FileChangeKind::Modified | FileChangeKind::Renamed | FileChangeKind::Untracked => {
-                let old_p = old_path.unwrap_or(path);
-                (
-                    load_revision_content(&self.repo, &parent, old_p),
-                    load_revision_content(&self.repo, commit, path),
-                )
-            }
-        }
-    }
+                    self.is_binary = is_binary;
+                    self.old_buffer = Some(old_buffer);
+                    self.new_buffer = Some(new_buffer);
+                    self.diff = diff;
+                    self.dirty = true;
+                }
+                DiffLoadResponse::Error { id, message } => {
+                    if self.pending_request_id != Some(id) {
+                        continue;
+                    }
 
-    /// Load content for a range diff (from..to).
-    fn load_range_content(
-        &self,
-        from: &str,
-        to: &str,
-        path: &crate::core::RelPath,
-        kind: FileChangeKind,
-        old_path: Option<&crate::core::RelPath>,
-    ) -> (
-        Result<Vec<u8>, crate::core::RepoError>,
-        Result<Vec<u8>, crate::core::RepoError>,
-    ) {
-        match kind {
-            FileChangeKind::Added => (Ok(Vec::new()), load_revision_content(&self.repo, to, path)),
-            FileChangeKind::Deleted => (
-                load_revision_content(&self.repo, from, path),
-                Ok(Vec::new()),
-            ),
-            FileChangeKind::Modified | FileChangeKind::Renamed | FileChangeKind::Untracked => {
-                let old_p = old_path.unwrap_or(path);
-                (
-                    load_revision_content(&self.repo, from, old_p),
-                    load_revision_content(&self.repo, to, path),
-                )
-            }
-        }
-    }
-
-    /// Load content for base comparison (merge-base vs working tree).
-    fn load_base_content(
-        &self,
-        merge_base: &str,
-        path: &crate::core::RelPath,
-        kind: FileChangeKind,
-        old_path: Option<&crate::core::RelPath>,
-    ) -> (
-        Result<Vec<u8>, crate::core::RepoError>,
-        Result<Vec<u8>, crate::core::RepoError>,
-    ) {
-        match kind {
-            FileChangeKind::Added | FileChangeKind::Untracked => {
-                (Ok(Vec::new()), load_working_content(&self.repo, path))
-            }
-            FileChangeKind::Deleted => (
-                load_revision_content(&self.repo, merge_base, path),
-                Ok(Vec::new()),
-            ),
-            FileChangeKind::Modified | FileChangeKind::Renamed => {
-                let old_p = old_path.unwrap_or(path);
-                (
-                    load_revision_content(&self.repo, merge_base, old_p),
-                    load_working_content(&self.repo, path),
-                )
+                    self.pending_request_id = None;
+                    self.loading = false;
+                    self.diff = None;
+                    self.old_buffer = None;
+                    self.new_buffer = None;
+                    self.error_msg = Some(format!("Failed to load diff: {}", message));
+                    self.dirty = true;
+                }
             }
         }
     }
@@ -370,7 +285,7 @@ impl App {
     pub fn select_prev(&mut self) {
         if self.selected_idx > 0 {
             self.selected_idx -= 1;
-            self.load_current_diff();
+            self.request_current_diff();
             self.dirty = true;
         }
     }
@@ -379,7 +294,7 @@ impl App {
     pub fn select_next(&mut self) {
         if self.selected_idx + 1 < self.files.len() {
             self.selected_idx += 1;
-            self.load_current_diff();
+            self.request_current_diff();
             self.dirty = true;
         }
     }

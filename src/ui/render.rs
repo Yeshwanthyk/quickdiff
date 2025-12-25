@@ -366,6 +366,12 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
 
     // Handle empty states
+    if app.loading {
+        let msg = Paragraph::new("Loading diff…").style(Style::default().fg(TEXT_MUTED));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
     if app.is_binary {
         let msg = Paragraph::new("Binary file — cannot display diff")
             .style(Style::default().fg(TEXT_MUTED));
