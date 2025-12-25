@@ -19,6 +19,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     match app.mode {
         Mode::AddComment => return handle_add_comment_key(app, key),
         Mode::ViewComments => return handle_view_comments_key(app, key),
+        Mode::FilterFiles => return handle_filter_key(app, key),
         Mode::Normal => {}
     }
 
@@ -71,6 +72,14 @@ fn handle_sidebar_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Enter => {
             app.set_focus(Focus::Diff);
+            true
+        }
+        KeyCode::Char('/') => {
+            app.start_filter();
+            true
+        }
+        KeyCode::Esc => {
+            app.clear_filter();
             true
         }
         _ => false,
@@ -189,5 +198,30 @@ fn handle_view_comments_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         _ => true, // consume all keys in overlay
+    }
+}
+
+/// Handle keys when filtering files.
+fn handle_filter_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.cancel_filter();
+            true
+        }
+        KeyCode::Enter => {
+            app.apply_filter();
+            true
+        }
+        KeyCode::Backspace => {
+            app.sidebar_filter.pop();
+            app.mark_dirty();
+            true
+        }
+        KeyCode::Char(c) => {
+            app.sidebar_filter.push(c);
+            app.mark_dirty();
+            true
+        }
+        _ => false,
     }
 }

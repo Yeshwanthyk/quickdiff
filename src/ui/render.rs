@@ -246,13 +246,21 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         Style::default().fg(TEXT_MUTED)
     };
 
+    // Show filter indicator in title if active
+    let title = if app.filtered_indices.is_empty() {
+        format!(" Files ({}) ", app.viewed_status())
+    } else {
+        format!(
+            " Files ({}) [filter: {}] ",
+            app.filtered_indices.len(),
+            app.sidebar_filter
+        )
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(Span::styled(
-            format!(" Files ({}) ", app.viewed_status()),
-            title_style,
-        ))
+        .title(Span::styled(title, title_style))
         .style(Style::default().bg(BG_SURFACE));
 
     let inner = block.inner(area);
@@ -263,26 +271,48 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    if app.files.is_empty() {
-        let msg = Paragraph::new("No files").style(Style::default().fg(TEXT_MUTED).bg(BG_SURFACE));
-        frame.render_widget(msg, inner);
+    // Get visible file indices (filtered or all)
+    let visible_indices: Vec<usize> = if app.filtered_indices.is_empty() {
+        (0..app.files.len()).collect()
+    } else {
+        app.filtered_indices.clone()
+    };
+
+    if visible_indices.is_empty() {
+        let msg = if app.files.is_empty() {
+            "No files"
+        } else {
+            "No matches"
+        };
+        let para = Paragraph::new(msg).style(Style::default().fg(TEXT_MUTED).bg(BG_SURFACE));
+        frame.render_widget(para, inner);
         return;
     }
 
-    // Keep selection visible without rendering O(n) list items.
-    let max_scroll = app.files.len().saturating_sub(height);
+    // Find position of selected_idx in visible list
+    let selected_pos = visible_indices
+        .iter()
+        .position(|&idx| idx == app.selected_idx)
+        .unwrap_or(0);
+
+    // Keep selection visible
+    let max_scroll = visible_indices.len().saturating_sub(height);
     app.sidebar_scroll = app.sidebar_scroll.min(max_scroll);
 
-    if app.selected_idx < app.sidebar_scroll {
-        app.sidebar_scroll = app.selected_idx;
-    } else if app.selected_idx >= app.sidebar_scroll + height {
-        app.sidebar_scroll = app.selected_idx + 1 - height;
+    if selected_pos < app.sidebar_scroll {
+        app.sidebar_scroll = selected_pos;
+    } else if selected_pos >= app.sidebar_scroll + height {
+        app.sidebar_scroll = selected_pos + 1 - height;
     }
 
-    let end = (app.sidebar_scroll + height).min(app.files.len());
+    let end = (app.sidebar_scroll + height).min(visible_indices.len());
 
     let mut lines: Vec<Line> = Vec::with_capacity(height);
-    for idx in app.sidebar_scroll..end {
+    for &idx in visible_indices
+        .iter()
+        .skip(app.sidebar_scroll)
+        .take(end - app.sidebar_scroll)
+    {
         let file = &app.files[idx];
         let is_selected = idx == app.selected_idx;
         let is_viewed = app.viewed.is_viewed(&file.path);
@@ -873,6 +903,25 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // Filter mode
+    if app.mode == Mode::FilterFiles {
+        let line = Line::from(vec![
+            Span::styled(" Filter: ", Style::default().fg(ACCENT).bg(BG_ELEVATED)),
+            Span::styled(
+                &app.sidebar_filter,
+                Style::default().fg(TEXT_BRIGHT).bg(BG_ELEVATED),
+            ),
+            Span::styled("█", Style::default().fg(ACCENT).bg(BG_ELEVATED)),
+            Span::styled(
+                "  Enter: apply  Esc: cancel",
+                Style::default().fg(TEXT_MUTED).bg(BG_ELEVATED),
+            ),
+        ]);
+        let para = Paragraph::new(line).style(Style::default().bg(BG_ELEVATED));
+        frame.render_widget(para, area);
+        return;
+    }
+
     // Comments overlay mode
     if app.mode == Mode::ViewComments {
         let scope = if app.viewing_include_resolved {
@@ -922,6 +971,7 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
         Focus::Sidebar => &[
             ("j/k", "navigate"),
             ("↵", "open"),
+            ("/", "filter"),
             ("␣", "viewed"),
             ("⇥", "switch"),
             ("q", "quit"),

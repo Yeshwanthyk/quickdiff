@@ -27,6 +27,7 @@ pub enum Mode {
     Normal,
     AddComment,
     ViewComments,
+    FilterFiles,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +103,10 @@ pub struct App {
     pub viewing_comments_selected: usize,
     pub viewing_comments_scroll: usize,
     pub viewing_include_resolved: bool,
+    /// Sidebar filter query (when in FilterFiles mode).
+    pub sidebar_filter: String,
+    /// Filtered file indices (empty = show all).
+    pub filtered_indices: Vec<usize>,
     /// Last error message to display.
     pub error_msg: Option<String>,
     /// Status message to display (non-error).
@@ -220,6 +225,8 @@ impl App {
             viewing_comments_selected: 0,
             viewing_comments_scroll: 0,
             viewing_include_resolved: false,
+            sidebar_filter: String::new(),
+            filtered_indices: Vec::new(),
             error_msg: None,
             status_msg: None,
             dirty: true,
@@ -401,19 +408,51 @@ impl App {
 
     /// Move selection up in sidebar.
     pub fn select_prev(&mut self) {
-        if self.selected_idx > 0 {
-            self.selected_idx -= 1;
-            self.request_current_diff();
-            self.dirty = true;
+        if self.filtered_indices.is_empty() {
+            // No filter - simple prev
+            if self.selected_idx > 0 {
+                self.selected_idx -= 1;
+                self.request_current_diff();
+                self.dirty = true;
+            }
+        } else {
+            // Find current position in filtered list and move to prev
+            if let Some(pos) = self
+                .filtered_indices
+                .iter()
+                .position(|&i| i == self.selected_idx)
+            {
+                if pos > 0 {
+                    self.selected_idx = self.filtered_indices[pos - 1];
+                    self.request_current_diff();
+                    self.dirty = true;
+                }
+            }
         }
     }
 
     /// Move selection down in sidebar.
     pub fn select_next(&mut self) {
-        if self.selected_idx + 1 < self.files.len() {
-            self.selected_idx += 1;
-            self.request_current_diff();
-            self.dirty = true;
+        if self.filtered_indices.is_empty() {
+            // No filter - simple next
+            if self.selected_idx + 1 < self.files.len() {
+                self.selected_idx += 1;
+                self.request_current_diff();
+                self.dirty = true;
+            }
+        } else {
+            // Find current position in filtered list and move to next
+            if let Some(pos) = self
+                .filtered_indices
+                .iter()
+                .position(|&i| i == self.selected_idx)
+            {
+                if pos + 1 < self.filtered_indices.len() {
+                    self.selected_idx = self.filtered_indices[pos + 1];
+                    self.request_current_diff();
+                    self.dirty = true;
+                }
+            }
         }
     }
 
@@ -837,5 +876,75 @@ impl App {
         }
 
         self.dirty = true;
+    }
+
+    // ========================================================================
+    // Sidebar filter
+    // ========================================================================
+
+    /// Start filtering files in sidebar.
+    pub fn start_filter(&mut self) {
+        self.mode = Mode::FilterFiles;
+        self.sidebar_filter.clear();
+        self.dirty = true;
+    }
+
+    /// Apply the current filter query.
+    pub fn apply_filter(&mut self) {
+        let query = self.sidebar_filter.trim().to_lowercase();
+        if query.is_empty() {
+            self.filtered_indices.clear();
+        } else {
+            self.filtered_indices = self
+                .files
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.path.as_str().to_lowercase().contains(&query))
+                .map(|(i, _)| i)
+                .collect();
+        }
+        // Reset selection to first match if current selection is filtered out
+        if !self.filtered_indices.is_empty()
+            && !self.filtered_indices.contains(&self.selected_idx)
+        {
+            self.selected_idx = self.filtered_indices[0];
+            self.request_current_diff();
+        }
+        self.mode = Mode::Normal;
+        self.dirty = true;
+    }
+
+    /// Cancel filter and restore full list.
+    pub fn cancel_filter(&mut self) {
+        self.mode = Mode::Normal;
+        self.sidebar_filter.clear();
+        self.filtered_indices.clear();
+        self.dirty = true;
+    }
+
+    /// Clear filter while in Normal mode.
+    pub fn clear_filter(&mut self) {
+        if !self.filtered_indices.is_empty() {
+            self.filtered_indices.clear();
+            self.sidebar_filter.clear();
+            self.dirty = true;
+        }
+    }
+
+    /// Get visible files (filtered or all).
+    pub fn visible_files(&self) -> Vec<(usize, &ChangedFile)> {
+        if self.filtered_indices.is_empty() {
+            self.files.iter().enumerate().collect()
+        } else {
+            self.filtered_indices
+                .iter()
+                .filter_map(|&i| self.files.get(i).map(|f| (i, f)))
+                .collect()
+        }
+    }
+
+    /// Check if a file index is visible (passes filter).
+    pub fn is_file_visible(&self, idx: usize) -> bool {
+        self.filtered_indices.is_empty() || self.filtered_indices.contains(&idx)
     }
 }
