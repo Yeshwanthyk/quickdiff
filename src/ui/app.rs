@@ -535,6 +535,18 @@ impl App {
         }
     }
 
+    /// Get current hunk position as (1-based index, total).
+    /// Returns None if no diff or not on a hunk.
+    pub fn current_hunk_info(&self) -> Option<(usize, usize)> {
+        let diff = self.diff.as_ref()?;
+        let hunks = diff.hunks();
+        if hunks.is_empty() {
+            return None;
+        }
+        let hunk_idx = diff.hunk_at_row(self.scroll_y)?;
+        Some((hunk_idx + 1, hunks.len()))
+    }
+
     /// Switch focus.
     pub fn toggle_focus(&mut self) {
         self.focus = match self.focus {

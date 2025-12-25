@@ -163,13 +163,33 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    // Pad to fill width
-    let content_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-    let padding = " ".repeat(area.width as usize - content_len.min(area.width as usize));
+    // Build right-aligned hunk indicator
+    let right_text = app
+        .current_hunk_info()
+        .map(|(cur, tot)| format!("hunk {}/{}  ", cur, tot))
+        .unwrap_or_default();
+    let right_len = right_text.chars().count();
+
+    // Pad to fill width, leaving room for right indicator
+    let left_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    let total_width = area.width as usize;
+    let padding_len = total_width
+        .saturating_sub(left_len)
+        .saturating_sub(right_len);
     spans.push(Span::styled(
-        padding,
+        " ".repeat(padding_len),
         Style::default().bg(app.theme.bg_elevated),
     ));
+
+    // Right-aligned hunk indicator
+    if !right_text.is_empty() {
+        spans.push(Span::styled(
+            right_text,
+            Style::default()
+                .fg(app.theme.accent)
+                .bg(app.theme.bg_elevated),
+        ));
+    }
 
     let line = Line::from(spans);
     let para = Paragraph::new(line);
