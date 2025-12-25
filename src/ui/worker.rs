@@ -29,7 +29,8 @@ pub(crate) enum DiffLoadResponse {
 }
 
 pub(crate) struct DiffWorker {
-    pub request_tx: SyncSender<DiffLoadRequest>,
+    /// Wrapped in Option so we can drop it before joining the thread.
+    pub request_tx: Option<SyncSender<DiffLoadRequest>>,
     pub response_rx: Receiver<DiffLoadResponse>,
     handle: Option<JoinHandle<()>>,
 }
@@ -52,7 +53,7 @@ pub(crate) fn spawn_diff_worker(repo: RepoRoot) -> DiffWorker {
     let handle = thread::spawn(move || worker_loop(repo, request_rx, response_tx));
 
     DiffWorker {
-        request_tx,
+        request_tx: Some(request_tx),
         response_rx,
         handle: Some(handle),
     }
@@ -60,11 +61,10 @@ pub(crate) fn spawn_diff_worker(repo: RepoRoot) -> DiffWorker {
 
 impl Drop for DiffWorker {
     fn drop(&mut self) {
-        // Dropping request_tx closes the channel, causing worker_loop to exit.
-        // We must drop it first (it's already being dropped), then join.
-        // The Sender is dropped automatically, so just join the thread.
+        // Drop the sender first to close the channel and unblock recv()
+        drop(self.request_tx.take());
+        // Now the worker thread will exit, so we can join it
         if let Some(handle) = self.handle.take() {
-            // Don't panic if thread panicked — just ignore
             let _ = handle.join();
         }
     }

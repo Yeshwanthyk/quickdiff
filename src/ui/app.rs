@@ -369,7 +369,13 @@ impl App {
             file: file.clone(),
         };
 
-        if self.worker.request_tx.send(req).is_err() {
+        let send_failed = self
+            .worker
+            .request_tx
+            .as_ref()
+            .map(|tx| tx.send(req).is_err())
+            .unwrap_or(true);
+        if send_failed {
             self.error_msg = Some("Diff worker stopped".to_string());
             self.loading = false;
             self.pending_request_id = None;
