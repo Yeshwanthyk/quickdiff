@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
@@ -227,69 +227,6 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let is_focused = app.focus == Focus::Sidebar;
 
-    let items: Vec<ListItem> = app
-        .files
-        .iter()
-        .enumerate()
-        .map(|(idx, file)| {
-            let is_selected = idx == app.selected_idx;
-            let is_viewed = app.viewed.is_viewed(&file.path);
-
-            // Selection indicator (left edge)
-            let select_indicator = if is_selected { "▌" } else { " " };
-
-            // Change kind indicator with color
-            let (kind_char, kind_color) = match file.kind {
-                FileChangeKind::Added => ('A', SUCCESS),
-                FileChangeKind::Modified => ('M', WARNING),
-                FileChangeKind::Deleted => ('D', ERROR),
-                FileChangeKind::Untracked => ('?', TEXT_MUTED),
-                FileChangeKind::Renamed => ('R', ACCENT_DIM),
-            };
-
-            let viewed_char = if is_viewed { '✓' } else { '·' };
-            let viewed_color = if is_viewed { SUCCESS } else { TEXT_FAINT };
-
-            // Ellipsize path
-            let path = file.path.as_str();
-            let display_path = if path.len() > SIDEBAR_PATH_WIDTH {
-                format!("…{}", &path[path.len() - SIDEBAR_PATH_WIDTH + 1..])
-            } else {
-                path.to_string()
-            };
-
-            // Text brightness based on state
-            let text_color = if is_selected {
-                TEXT_BRIGHT
-            } else if is_viewed {
-                TEXT_DIM // Viewed files are dimmer
-            } else {
-                TEXT_NORMAL
-            };
-
-            let line = Line::from(vec![
-                Span::styled(
-                    select_indicator,
-                    Style::default().fg(if is_selected {
-                        INDICATOR_SELECTED
-                    } else {
-                        BG_SURFACE
-                    }),
-                ),
-                Span::styled(format!("{}", kind_char), Style::default().fg(kind_color)),
-                Span::styled(" ", Style::default()),
-                Span::styled(
-                    format!("{}", viewed_char),
-                    Style::default().fg(viewed_color),
-                ),
-                Span::styled(" ", Style::default()),
-                Span::styled(display_path, Style::default().fg(text_color)),
-            ]);
-
-            ListItem::new(line)
-        })
-        .collect();
-
     let border_color = if is_focused { ACCENT } else { BORDER_DIM };
     let title_style = if is_focused {
         Style::default().fg(ACCENT)
@@ -306,14 +243,104 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         ))
         .style(Style::default().bg(BG_SURFACE));
 
-    // Selected row gets subtle background
-    let highlight_style = Style::default().bg(BG_SELECTED);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(highlight_style);
+    let height = inner.height as usize;
+    if height == 0 {
+        return;
+    }
 
-    frame.render_stateful_widget(list, area, &mut app.list_state);
+    if app.files.is_empty() {
+        let msg = Paragraph::new("No files").style(Style::default().fg(TEXT_MUTED).bg(BG_SURFACE));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    // Keep selection visible without rendering O(n) list items.
+    let max_scroll = app.files.len().saturating_sub(height);
+    app.sidebar_scroll = app.sidebar_scroll.min(max_scroll);
+
+    if app.selected_idx < app.sidebar_scroll {
+        app.sidebar_scroll = app.selected_idx;
+    } else if app.selected_idx >= app.sidebar_scroll + height {
+        app.sidebar_scroll = app.selected_idx + 1 - height;
+    }
+
+    let end = (app.sidebar_scroll + height).min(app.files.len());
+
+    let mut lines: Vec<Line> = Vec::with_capacity(height);
+    for idx in app.sidebar_scroll..end {
+        let file = &app.files[idx];
+        let is_selected = idx == app.selected_idx;
+        let is_viewed = app.viewed.is_viewed(&file.path);
+
+        let row_bg = if is_selected { BG_SELECTED } else { BG_SURFACE };
+
+        // Selection indicator (left edge)
+        let select_indicator = if is_selected { "▌" } else { " " };
+        let select_style = Style::default()
+            .fg(if is_selected {
+                INDICATOR_SELECTED
+            } else {
+                row_bg
+            })
+            .bg(row_bg);
+
+        // Change kind indicator with color
+        let (kind_char, kind_color) = match file.kind {
+            FileChangeKind::Added => ('A', SUCCESS),
+            FileChangeKind::Modified => ('M', WARNING),
+            FileChangeKind::Deleted => ('D', ERROR),
+            FileChangeKind::Untracked => ('?', TEXT_MUTED),
+            FileChangeKind::Renamed => ('R', ACCENT_DIM),
+        };
+
+        let viewed_char = if is_viewed { '✓' } else { '·' };
+        let viewed_color = if is_viewed { SUCCESS } else { TEXT_FAINT };
+
+        // Ellipsize path
+        let path = file.path.as_str();
+        let display_path = if path.len() > SIDEBAR_PATH_WIDTH {
+            format!("…{}", &path[path.len() - SIDEBAR_PATH_WIDTH + 1..])
+        } else {
+            path.to_string()
+        };
+
+        // Text brightness based on state
+        let text_color = if is_selected {
+            TEXT_BRIGHT
+        } else if is_viewed {
+            TEXT_DIM // Viewed files are dimmer
+        } else {
+            TEXT_NORMAL
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(select_indicator, select_style),
+            Span::styled(
+                kind_char.to_string(),
+                Style::default().fg(kind_color).bg(row_bg),
+            ),
+            Span::styled(" ", Style::default().bg(row_bg)),
+            Span::styled(
+                viewed_char.to_string(),
+                Style::default().fg(viewed_color).bg(row_bg),
+            ),
+            Span::styled(" ", Style::default().bg(row_bg)),
+            Span::styled(display_path, Style::default().fg(text_color).bg(row_bg)),
+        ]));
+    }
+
+    while lines.len() < height {
+        lines.push(Line::from(Span::styled(
+            "",
+            Style::default().bg(BG_SURFACE),
+        )));
+    }
+
+    let para = Paragraph::new(lines).style(Style::default().bg(BG_SURFACE));
+    frame.render_widget(para, inner);
 }
 
 // ============================================================================
@@ -392,6 +419,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
 
     let height = area.height as usize;
     let max_content = (area.width as usize).saturating_sub(GUTTER_WIDTH);
+    let spaces = " ".repeat(max_content);
     let mut lines: Vec<Line> = Vec::with_capacity(height);
 
     for row in diff.render_rows(app.scroll_y, height) {
@@ -471,6 +499,9 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                     let mut byte_offset = hl.start;
                     let mut local_char = 0usize;
 
+                    let mut pending_style: Option<Style> = None;
+                    let mut pending_text = String::new();
+
                     for ch in span_text.chars() {
                         let global_char = char_pos + local_char;
 
@@ -483,7 +514,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
 
                         // Stop if we've hit width limit
                         if visible_len >= max_content {
-                            break 'outer;
+                            break;
                         }
 
                         // Determine if this byte is in a changed region
@@ -493,15 +524,35 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                                 .any(|s| s.changed && byte_offset >= s.start && byte_offset < s.end)
                         });
                         let char_bg = if is_changed { inline_bg } else { bg_color };
+                        let style = Style::default().fg(fg).bg(char_bg);
 
+                        let same_style = pending_style.as_ref().is_some_and(|ps| ps == &style);
+                        if !same_style {
+                            if !pending_text.is_empty() {
+                                code_spans.push(Span::styled(
+                                    std::mem::take(&mut pending_text),
+                                    pending_style.take().unwrap_or_default(),
+                                ));
+                            }
+                            pending_style = Some(style);
+                        }
+
+                        pending_text.push(sanitize_char(ch));
                         visible_len += 1;
-                        code_spans.push(Span::styled(
-                            sanitize_char(ch).to_string(),
-                            Style::default().fg(fg).bg(char_bg),
-                        ));
 
                         byte_offset += ch.len_utf8();
                         local_char += 1;
+                    }
+
+                    if !pending_text.is_empty() {
+                        code_spans.push(Span::styled(
+                            pending_text,
+                            pending_style.unwrap_or_default(),
+                        ));
+                    }
+
+                    if visible_len >= max_content {
+                        break 'outer;
                     }
                 }
 
@@ -522,13 +573,16 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             let pad_len = max_content.saturating_sub(visible_len);
             if pad_len > 0 {
                 spans.push(Span::styled(
-                    " ".repeat(pad_len),
+                    &spaces[..pad_len],
                     Style::default().bg(bg_color),
                 ));
             }
             spans.extend(code_spans);
             // Separator + line number on right edge (inside)
-            spans.push(Span::styled(" │", Style::default().fg(GUTTER_SEP).bg(bg_color)));
+            spans.push(Span::styled(
+                " │",
+                Style::default().fg(GUTTER_SEP).bg(bg_color),
+            ));
             spans.push(Span::styled(
                 line_num_str,
                 Style::default().fg(TEXT_FAINT).bg(bg_color),
@@ -539,13 +593,16 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                 line_num_str,
                 Style::default().fg(TEXT_FAINT).bg(bg_color),
             ));
-            spans.push(Span::styled("│ ", Style::default().fg(GUTTER_SEP).bg(bg_color)));
+            spans.push(Span::styled(
+                "│ ",
+                Style::default().fg(GUTTER_SEP).bg(bg_color),
+            ));
             spans.extend(code_spans);
             // Trailing padding
             let pad_len = max_content.saturating_sub(visible_len);
             if pad_len > 0 {
                 spans.push(Span::styled(
-                    " ".repeat(pad_len),
+                    &spaces[..pad_len],
                     Style::default().bg(bg_color),
                 ));
             }
@@ -575,8 +632,16 @@ fn render_comments_overlay(frame: &mut Frame, app: &App) {
     use ratatui::widgets::Clear;
 
     let area = frame.area();
-    let width = (area.width * 3 / 4).clamp(40, 70);
-    let height = (app.viewing_comments.len() as u16 + 4).clamp(5, area.height.saturating_sub(4));
+
+    let max_overlay_width = area.width.saturating_sub(4).max(1);
+    let min_overlay_width = 40.min(max_overlay_width);
+    let max_overlay_width = 70.min(max_overlay_width);
+    let width = (area.width * 3 / 4).clamp(min_overlay_width, max_overlay_width);
+
+    let max_overlay_height = area.height.saturating_sub(4).max(1);
+    let min_overlay_height = 5.min(max_overlay_height);
+    let height =
+        (app.viewing_comments.len() as u16 + 4).clamp(min_overlay_height, max_overlay_height);
 
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
