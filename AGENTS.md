@@ -77,6 +77,11 @@ Tree-sitter based highlighting is enabled for:
 - **Rust** (`.rs`)
 - **TypeScript/JavaScript** (`.ts`, `.js`, `.mjs`, `.cjs`)
 - **TSX/JSX** (`.tsx`, `.jsx`)
+- **Go** (`.go`)
+- **Python** (`.py`, `.pyi`)
+- **JSON** (`.json`)
+- **YAML** (`.yaml`, `.yml`)
+- **Bash** (`.sh`, `.bash`, `.zsh`)
 
 Falls back to plain text for unsupported extensions.
 

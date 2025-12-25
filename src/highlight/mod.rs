@@ -25,6 +25,21 @@ pub enum LanguageId {
     /// JavaScript with JSX.
     #[cfg(feature = "lang-typescript")]
     JavaScriptReact,
+    /// Go source files.
+    #[cfg(feature = "lang-go")]
+    Go,
+    /// Python source files.
+    #[cfg(feature = "lang-python")]
+    Python,
+    /// JSON files.
+    #[cfg(feature = "lang-json")]
+    Json,
+    /// YAML files.
+    #[cfg(feature = "lang-yaml")]
+    Yaml,
+    /// Bash/shell scripts.
+    #[cfg(feature = "lang-bash")]
+    Bash,
     /// Plain text (no highlighting).
     Plain,
 }
@@ -43,6 +58,16 @@ impl LanguageId {
             "js" | "mjs" | "cjs" => Self::JavaScript,
             #[cfg(feature = "lang-typescript")]
             "jsx" => Self::JavaScriptReact,
+            #[cfg(feature = "lang-go")]
+            "go" => Self::Go,
+            #[cfg(feature = "lang-python")]
+            "py" | "pyi" => Self::Python,
+            #[cfg(feature = "lang-json")]
+            "json" => Self::Json,
+            #[cfg(feature = "lang-yaml")]
+            "yaml" | "yml" => Self::Yaml,
+            #[cfg(feature = "lang-bash")]
+            "sh" | "bash" | "zsh" => Self::Bash,
             _ => Self::Plain,
         }
     }
@@ -346,6 +371,31 @@ impl TreeSitterHighlighter {
             LanguageId::TypeScriptReact | LanguageId::JavaScriptReact => (
                 tree_sitter_typescript::LANGUAGE_TSX.into(),
                 tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            ),
+            #[cfg(feature = "lang-go")]
+            LanguageId::Go => (
+                tree_sitter_go::LANGUAGE.into(),
+                tree_sitter_go::HIGHLIGHTS_QUERY,
+            ),
+            #[cfg(feature = "lang-python")]
+            LanguageId::Python => (
+                tree_sitter_python::LANGUAGE.into(),
+                tree_sitter_python::HIGHLIGHTS_QUERY,
+            ),
+            #[cfg(feature = "lang-json")]
+            LanguageId::Json => (
+                tree_sitter_json::LANGUAGE.into(),
+                tree_sitter_json::HIGHLIGHTS_QUERY,
+            ),
+            #[cfg(feature = "lang-yaml")]
+            LanguageId::Yaml => (
+                tree_sitter_yaml::LANGUAGE.into(),
+                tree_sitter_yaml::HIGHLIGHTS_QUERY,
+            ),
+            #[cfg(feature = "lang-bash")]
+            LanguageId::Bash => (
+                tree_sitter_bash::LANGUAGE.into(),
+                tree_sitter_bash::HIGHLIGHT_QUERY,
             ),
             // Plain or disabled languages
             _ => return None,
