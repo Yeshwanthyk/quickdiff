@@ -5,6 +5,9 @@ use std::process::Command;
 
 use thiserror::Error;
 
+/// Maximum file size to load (50 MiB). Prevents OOM on huge files.
+pub const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
+
 /// Errors from repository operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -24,6 +27,14 @@ pub enum RepoError {
     /// Invalid revision specified.
     #[error("invalid revision: {0}")]
     InvalidRevision(String),
+    /// File exceeds maximum allowed size.
+    #[error("file too large: {size} bytes (max {max} bytes)")]
+    FileTooLarge {
+        /// Actual file size.
+        size: u64,
+        /// Maximum allowed size.
+        max: u64,
+    },
 }
 
 /// Error when constructing a RelPath with an absolute path.
@@ -61,6 +72,18 @@ pub struct RepoRoot(PathBuf);
 
 impl RepoRoot {
     /// Discover the git repository containing the given path.
+    ///
+    /// Walks up the directory tree to find a `.git` directory.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use quickdiff::core::RepoRoot;
+    /// use std::path::Path;
+    ///
+    /// let repo = RepoRoot::discover(Path::new(".")).expect("not in a git repo");
+    /// println!("Repo at: {}", repo.path().display());
+    /// ```
     #[must_use = "this returns a Result that should be checked"]
     pub fn discover(path: &Path) -> Result<Self, RepoError> {
         let output = Command::new("git")
@@ -85,11 +108,13 @@ impl RepoRoot {
     }
 
     /// Get the repository root path.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.0
     }
 
     /// Get the repository root as a string (for persistence keys).
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.to_str().unwrap_or("")
     }
@@ -149,21 +174,25 @@ impl RelPath {
     }
 
     /// Get the path as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Convert to an absolute path given a repo root.
+    #[must_use]
     pub fn to_absolute(&self, root: &RepoRoot) -> PathBuf {
         root.path().join(&self.0)
     }
 
     /// Get the file extension, if any.
+    #[must_use]
     pub fn extension(&self) -> Option<&str> {
         Path::new(&self.0).extension().and_then(|s| s.to_str())
     }
 
     /// Get the file name.
+    #[must_use]
     pub fn file_name(&self) -> &str {
         Path::new(&self.0)
             .file_name()
@@ -310,13 +339,22 @@ pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, Rep
 
 /// Load content from the working tree.
 /// Returns empty content for directories, symlinks, or missing files.
+/// Returns error if file exceeds `MAX_FILE_SIZE`.
 #[must_use = "this returns a Result that should be checked"]
 pub fn load_working_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, RepoError> {
     let full_path = path.to_absolute(root);
 
     // Check if it's a regular file first
     match std::fs::metadata(&full_path) {
-        Ok(meta) if meta.is_file() => {}
+        Ok(meta) if meta.is_file() => {
+            // Check file size limit
+            if meta.len() > MAX_FILE_SIZE {
+                return Err(RepoError::FileTooLarge {
+                    size: meta.len(),
+                    max: MAX_FILE_SIZE,
+                });
+            }
+        }
         Ok(_) => return Ok(Vec::new()), // Directory, symlink, etc.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),

@@ -1,12 +1,24 @@
 //! Comment persistence with repo-local storage.
 
-use std::io;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::core::{Anchor, Comment, CommentContext, CommentId, CommentStatus, RelPath, RepoRoot};
+
+/// Errors from comment store operations.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum CommentStoreError {
+    /// I/O error reading or writing the store.
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    /// JSON serialization/deserialization error.
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+}
 
 /// Persisted state schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,10 +56,10 @@ pub trait CommentStore {
         context: CommentContext,
         message: String,
         anchor: Anchor,
-    ) -> io::Result<CommentId>;
+    ) -> Result<CommentId, CommentStoreError>;
 
     /// Resolve a comment by ID.
-    fn resolve(&mut self, id: CommentId) -> io::Result<bool>;
+    fn resolve(&mut self, id: CommentId) -> Result<bool, CommentStoreError>;
 
     /// Get a comment by ID.
     fn get(&self, id: CommentId) -> Option<&Comment>;
@@ -62,18 +74,13 @@ pub struct FileCommentStore {
 impl FileCommentStore {
     /// Open or create a comment store for the given repo.
     #[must_use = "this returns a Result that should be checked"]
-    pub fn open(repo_root: &RepoRoot) -> io::Result<Self> {
+    pub fn open(repo_root: &RepoRoot) -> Result<Self, CommentStoreError> {
         let dir = repo_root.path().join(".quickdiff");
         let state_path = dir.join("comments.json");
 
         let state = if state_path.exists() {
             let content = std::fs::read_to_string(&state_path)?;
-            serde_json::from_str(&content).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid comments.json: {}", e),
-                )
-            })?
+            serde_json::from_str(&content)?
         } else {
             CommentsState::default()
         };
@@ -83,7 +90,7 @@ impl FileCommentStore {
 
     /// Save state to disk using atomic write.
     #[must_use = "this returns a Result that should be checked"]
-    pub fn save(&self) -> io::Result<()> {
+    pub fn save(&self) -> Result<(), CommentStoreError> {
         // Ensure parent directory exists
         if let Some(parent) = self.state_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -91,8 +98,7 @@ impl FileCommentStore {
 
         // Atomic write: temp file + rename
         let temp_path = self.state_path.with_extension("json.tmp");
-        let content = serde_json::to_string_pretty(&self.state)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let content = serde_json::to_string_pretty(&self.state)?;
         std::fs::write(&temp_path, content)?;
         std::fs::rename(&temp_path, &self.state_path)?;
 
@@ -131,7 +137,7 @@ impl CommentStore for FileCommentStore {
         context: CommentContext,
         message: String,
         anchor: Anchor,
-    ) -> io::Result<CommentId> {
+    ) -> Result<CommentId, CommentStoreError> {
         let id = self.state.next_id;
         self.state.next_id += 1;
 
@@ -152,7 +158,7 @@ impl CommentStore for FileCommentStore {
         Ok(id)
     }
 
-    fn resolve(&mut self, id: CommentId) -> io::Result<bool> {
+    fn resolve(&mut self, id: CommentId) -> Result<bool, CommentStoreError> {
         if let Some(comment) = self.state.comments.iter_mut().find(|c| c.id == id) {
             comment.status = CommentStatus::Resolved;
             comment.resolved_at_ms = Some(Self::now_ms());
@@ -204,7 +210,7 @@ impl CommentStore for MemoryCommentStore {
         context: CommentContext,
         message: String,
         anchor: Anchor,
-    ) -> io::Result<CommentId> {
+    ) -> Result<CommentId, CommentStoreError> {
         let id = self.state.next_id;
         self.state.next_id += 1;
 
@@ -223,7 +229,7 @@ impl CommentStore for MemoryCommentStore {
         Ok(id)
     }
 
-    fn resolve(&mut self, id: CommentId) -> io::Result<bool> {
+    fn resolve(&mut self, id: CommentId) -> Result<bool, CommentStoreError> {
         if let Some(comment) = self.state.comments.iter_mut().find(|c| c.id == id) {
             comment.status = CommentStatus::Resolved;
             Ok(true)

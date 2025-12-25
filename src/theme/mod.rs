@@ -63,6 +63,12 @@ pub struct Theme {
     pub syn_attribute: Color,
 }
 
+impl Default for Theme {
+    fn default() -> Self {
+        Self::builtin_default()
+    }
+}
+
 /// JSON theme file format.
 #[derive(Debug, Deserialize)]
 #[allow(missing_docs)]

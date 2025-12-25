@@ -77,6 +77,22 @@ pub struct DiffResult {
 
 impl DiffResult {
     /// Compute diff between old and new text buffers.
+    ///
+    /// Uses 3 lines of context by default. For custom context, use
+    /// [`compute_with_context`](Self::compute_with_context).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use quickdiff::core::{DiffResult, TextBuffer};
+    ///
+    /// let old = TextBuffer::new(b"hello\nworld\n");
+    /// let new = TextBuffer::new(b"hello\nrust\n");
+    /// let diff = DiffResult::compute(&old, &new);
+    ///
+    /// assert!(diff.has_changes());
+    /// assert_eq!(diff.hunks().len(), 1);
+    /// ```
     pub fn compute(old: &TextBuffer, new: &TextBuffer) -> Self {
         compute_diff(old, new, 3) // 3 lines of context by default
     }
@@ -87,16 +103,19 @@ impl DiffResult {
     }
 
     /// Get all render rows.
+    #[must_use]
     pub fn rows(&self) -> &[RenderRow] {
         &self.rows
     }
 
     /// Get all hunks.
+    #[must_use]
     pub fn hunks(&self) -> &[Hunk] {
         &self.hunks
     }
 
     /// Total number of render rows.
+    #[must_use]
     pub fn row_count(&self) -> usize {
         self.rows.len()
     }
@@ -108,6 +127,7 @@ impl DiffResult {
 
     /// Find the next hunk after the given row (for `}` navigation).
     /// Returns the start row of the next hunk, or None if no more hunks.
+    #[must_use]
     pub fn next_hunk_row(&self, current_row: usize) -> Option<usize> {
         let idx = self.hunks.partition_point(|h| h.start_row <= current_row);
         self.hunks.get(idx).map(|h| h.start_row)
@@ -115,6 +135,7 @@ impl DiffResult {
 
     /// Find the previous hunk before the given row (for `{` navigation).
     /// Returns the start row of the previous hunk, or None if no earlier hunks.
+    #[must_use]
     pub fn prev_hunk_row(&self, current_row: usize) -> Option<usize> {
         let idx = self.hunks.partition_point(|h| h.start_row < current_row);
         if idx > 0 {
@@ -125,12 +146,14 @@ impl DiffResult {
     }
 
     /// Check if there are any changes.
+    #[must_use]
     pub fn has_changes(&self) -> bool {
         self.rows.iter().any(|r| r.kind != ChangeKind::Equal)
     }
 
     /// Find the hunk containing a given row.
     /// Returns the hunk index (0-based) or None if row is not within any hunk.
+    #[must_use]
     pub fn hunk_at_row(&self, row: usize) -> Option<usize> {
         let idx = self.hunks.partition_point(|h| h.start_row <= row);
         if idx == 0 {
@@ -526,6 +549,76 @@ fn make_hunk(rows: &[RenderRow], start: usize, end: usize) -> Hunk {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Property-based tests
+    mod proptest_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Diff of identical content should have no changes.
+            #[test]
+            fn identical_content_no_changes(content in "[a-z\n]{0,200}") {
+                let buf = TextBuffer::new(content.as_bytes());
+                let result = DiffResult::compute(&buf, &buf);
+                prop_assert!(!result.has_changes());
+            }
+
+            /// Diff should be symmetric in detecting changes.
+            #[test]
+            fn diff_detects_changes(
+                old in "[a-z]{0,50}",
+                new in "[a-z]{0,50}"
+            ) {
+                let old_buf = TextBuffer::new(old.as_bytes());
+                let new_buf = TextBuffer::new(new.as_bytes());
+                let result = DiffResult::compute(&old_buf, &new_buf);
+
+                // If content differs, there should be changes (unless both empty)
+                if old != new && !(old.is_empty() && new.is_empty()) {
+                    prop_assert!(result.has_changes() || result.row_count() == 0);
+                }
+            }
+
+            /// Row count should be non-negative and reasonable.
+            #[test]
+            fn row_count_reasonable(
+                old in "[a-z\n]{0,100}",
+                new in "[a-z\n]{0,100}"
+            ) {
+                let old_buf = TextBuffer::new(old.as_bytes());
+                let new_buf = TextBuffer::new(new.as_bytes());
+                let result = DiffResult::compute(&old_buf, &new_buf);
+
+                // Row count should be at most sum of lines (loose bound)
+                let max_lines = old_buf.line_count() + new_buf.line_count() + 1;
+                prop_assert!(result.row_count() <= max_lines);
+            }
+
+            /// Hunk navigation should be consistent.
+            #[test]
+            fn hunk_navigation_consistent(
+                old in "[a-z\n]{0,50}",
+                new in "[a-z\n]{0,50}"
+            ) {
+                let old_buf = TextBuffer::new(old.as_bytes());
+                let new_buf = TextBuffer::new(new.as_bytes());
+                let result = DiffResult::compute(&old_buf, &new_buf);
+
+                // next_hunk from start should give first hunk (if any)
+                if let Some(first) = result.next_hunk_row(0) {
+                    prop_assert!(first < result.row_count());
+                }
+
+                // prev_hunk from end should give last hunk (if any)
+                if result.row_count() > 0 {
+                    if let Some(last) = result.prev_hunk_row(result.row_count()) {
+                        prop_assert!(last < result.row_count());
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn empty_diff() {

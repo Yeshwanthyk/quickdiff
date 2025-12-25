@@ -124,7 +124,19 @@ pub struct FileViewedStore {
 
 impl FileViewedStore {
     /// Create a new FileViewedStore.
-    /// Loads existing state if available.
+    ///
+    /// Loads existing state if available. State is stored in
+    /// `~/.config/quickdiff/state.json`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use quickdiff::core::{FileViewedStore, ViewedStore, RelPath};
+    ///
+    /// let mut store = FileViewedStore::new("/path/to/repo").unwrap();
+    /// store.mark_viewed(RelPath::new("src/main.rs"));
+    /// store.save().unwrap();
+    /// ```
     #[must_use = "this returns a Result that should be checked"]
     pub fn new(repo_root: &str) -> std::io::Result<Self> {
         let state_path = Self::default_state_path()?;

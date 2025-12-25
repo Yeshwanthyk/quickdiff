@@ -2,6 +2,7 @@
 name = "quickdiff"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
 
 [dependencies]
 # CLI
@@ -39,6 +40,7 @@ lang-typescript = ["dep:tree-sitter-typescript"]
 [dev-dependencies]
 tempfile = "3"
 criterion = "0.5"
+proptest = "1.8.0"
 
 [[bench]]
 name = "diff_bench"
@@ -47,3 +49,4 @@ harness = false
 [profile.release]
 lto = true
 codegen-units = 1
+panic = "abort"

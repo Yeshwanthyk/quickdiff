@@ -43,6 +43,7 @@ impl TextBuffer {
     }
 
     /// Whether content appears to be binary (contains NUL bytes or high ratio of non-text).
+    #[must_use]
     pub fn is_binary(&self) -> bool {
         self.is_binary
     }
@@ -50,6 +51,7 @@ impl TextBuffer {
     /// Number of lines in the buffer.
     /// An empty buffer has 0 lines.
     /// A buffer with content always has at least 1 line.
+    #[must_use]
     pub fn line_count(&self) -> usize {
         if self.bytes.is_empty() {
             0
@@ -61,6 +63,7 @@ impl TextBuffer {
     /// Get the bytes for a specific line (0-indexed).
     /// Does not include the trailing newline.
     /// Returns None if line_num is out of bounds.
+    #[must_use]
     pub fn line(&self, line_num: usize) -> Option<&[u8]> {
         if line_num >= self.line_count() {
             return None;
@@ -77,6 +80,7 @@ impl TextBuffer {
     }
 
     /// Get line as a lossy UTF-8 string.
+    #[must_use]
     pub fn line_str(&self, line_num: usize) -> Option<String> {
         self.line(line_num)
             .map(|b| String::from_utf8_lossy(b).into_owned())
@@ -84,6 +88,7 @@ impl TextBuffer {
 
     /// Get all lines as strings (for diffing).
     /// Invalid UTF-8 is replaced with U+FFFD.
+    #[must_use]
     pub fn lines(&self) -> Vec<std::borrow::Cow<'_, str>> {
         (0..self.line_count())
             .filter_map(|i| self.line(i).map(String::from_utf8_lossy))
@@ -91,16 +96,19 @@ impl TextBuffer {
     }
 
     /// Total byte length.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.bytes.len()
     }
 
     /// Is the buffer empty?
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
     /// Raw bytes access.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
