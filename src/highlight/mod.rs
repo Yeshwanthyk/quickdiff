@@ -1,6 +1,7 @@
 //! Syntax highlighting using Tree-sitter.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TsHighlighter};
 
@@ -125,6 +126,7 @@ impl HighlighterTrait for PlainHighlighter {
 /// Tree-sitter based highlighter.
 pub struct TreeSitterHighlighter {
     config: HighlightConfiguration,
+    highlighter: Mutex<TsHighlighter>,
 }
 
 impl TreeSitterHighlighter {
@@ -150,13 +152,19 @@ impl TreeSitterHighlighter {
             HighlightConfiguration::new(language, "source", highlights_query, "", "").ok()?;
 
         config.configure(HIGHLIGHT_NAMES);
-        Some(Self { config })
+        Some(Self {
+            config,
+            highlighter: Mutex::new(TsHighlighter::new()),
+        })
     }
 }
 
 impl HighlighterTrait for TreeSitterHighlighter {
     fn highlight(&self, source: &str) -> Vec<StyledSpan> {
-        let mut highlighter = TsHighlighter::new();
+        let mut highlighter = match self.highlighter.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         let source_bytes = source.as_bytes();
 
         let highlights = match highlighter.highlight(&self.config, source_bytes, None, |_| None) {
