@@ -137,6 +137,14 @@ impl Theme {
             "rosepine" => Self::rosepine(),
             "onedark" | "one-dark" => Self::onedark(),
             "solarized" => Self::solarized(),
+            "monokai" => Self::monokai(),
+            "github" => Self::github(),
+            "kanagawa" => Self::kanagawa(),
+            "everforest" => Self::everforest(),
+            "nightowl" => Self::nightowl(),
+            "ayu" => Self::ayu(),
+            "palenight" => Self::palenight(),
+            "zenburn" => Self::zenburn(),
             _ => Self::builtin_default(),
         }
     }
@@ -145,14 +153,18 @@ impl Theme {
     pub fn list() -> Vec<String> {
         let mut themes = vec![
             "default".to_string(),
-            "dracula".to_string(),
+            "ayu".to_string(),
             "catppuccin".to_string(),
-            "nord".to_string(),
+            "dracula".to_string(),
+            "everforest".to_string(),
+            "github".to_string(),
             "gruvbox".to_string(),
-            "tokyonight".to_string(),
-            "rosepine".to_string(),
-            "onedark".to_string(),
+            "kanagawa".to_string(),
+            "monokai".to_string(),
+            "nightowl".to_string(),
             "solarized".to_string(),
+            "tokyonight".to_string(),
+            "zenburn".to_string(),
         ];
 
         // Add user themes
@@ -586,6 +598,374 @@ impl Theme {
             syn_constant: Color::Rgb(108, 113, 196),
             syn_property: Color::Rgb(38, 139, 210),
             syn_attribute: Color::Rgb(181, 137, 0),
+        }
+    }
+
+    /// Monokai theme.
+    pub fn monokai() -> Self {
+        Self {
+            bg_dark: Color::Rgb(39, 40, 34),
+            bg_surface: Color::Rgb(49, 50, 44),
+            bg_elevated: Color::Rgb(59, 60, 54),
+            bg_selected: Color::Rgb(73, 72, 62),
+
+            border_dim: Color::Rgb(59, 60, 54),
+            border_active: Color::Rgb(166, 226, 46),
+            gutter_sep: Color::Rgb(49, 50, 44),
+            pane_divider: Color::Rgb(59, 60, 54),
+
+            text_faint: Color::Rgb(70, 71, 65),
+            text_muted: Color::Rgb(117, 113, 94),
+            text_dim: Color::Rgb(150, 145, 130),
+            text_normal: Color::Rgb(248, 248, 242),
+            text_bright: Color::Rgb(255, 255, 255),
+
+            accent: Color::Rgb(166, 226, 46),
+            accent_dim: Color::Rgb(102, 217, 239),
+
+            diff_delete_bg: Color::Rgb(60, 35, 40),
+            diff_insert_bg: Color::Rgb(40, 60, 35),
+            diff_empty_bg: Color::Rgb(49, 50, 44),
+            inline_delete_bg: Color::Rgb(100, 50, 60),
+            inline_insert_bg: Color::Rgb(60, 100, 50),
+
+            success: Color::Rgb(166, 226, 46),
+            error: Color::Rgb(249, 38, 114),
+            warning: Color::Rgb(230, 219, 116),
+
+            syn_keyword: Color::Rgb(249, 38, 114),
+            syn_type: Color::Rgb(102, 217, 239),
+            syn_function: Color::Rgb(166, 226, 46),
+            syn_string: Color::Rgb(230, 219, 116),
+            syn_number: Color::Rgb(174, 129, 255),
+            syn_comment: Color::Rgb(117, 113, 94),
+            syn_operator: Color::Rgb(249, 38, 114),
+            syn_punctuation: Color::Rgb(248, 248, 242),
+            syn_constant: Color::Rgb(174, 129, 255),
+            syn_property: Color::Rgb(102, 217, 239),
+            syn_attribute: Color::Rgb(166, 226, 46),
+        }
+    }
+
+    /// GitHub Dark theme.
+    pub fn github() -> Self {
+        Self {
+            bg_dark: Color::Rgb(13, 17, 23),
+            bg_surface: Color::Rgb(22, 27, 34),
+            bg_elevated: Color::Rgb(33, 38, 45),
+            bg_selected: Color::Rgb(48, 54, 61),
+
+            border_dim: Color::Rgb(48, 54, 61),
+            border_active: Color::Rgb(88, 166, 255),
+            gutter_sep: Color::Rgb(33, 38, 45),
+            pane_divider: Color::Rgb(48, 54, 61),
+
+            text_faint: Color::Rgb(72, 79, 88),
+            text_muted: Color::Rgb(125, 133, 144),
+            text_dim: Color::Rgb(160, 168, 178),
+            text_normal: Color::Rgb(201, 209, 217),
+            text_bright: Color::Rgb(240, 246, 252),
+
+            accent: Color::Rgb(88, 166, 255),
+            accent_dim: Color::Rgb(56, 139, 253),
+
+            diff_delete_bg: Color::Rgb(50, 25, 30),
+            diff_insert_bg: Color::Rgb(25, 50, 35),
+            diff_empty_bg: Color::Rgb(22, 27, 34),
+            inline_delete_bg: Color::Rgb(90, 40, 50),
+            inline_insert_bg: Color::Rgb(40, 90, 55),
+
+            success: Color::Rgb(63, 185, 80),
+            error: Color::Rgb(248, 81, 73),
+            warning: Color::Rgb(210, 153, 34),
+
+            syn_keyword: Color::Rgb(255, 123, 114),
+            syn_type: Color::Rgb(255, 166, 87),
+            syn_function: Color::Rgb(210, 168, 255),
+            syn_string: Color::Rgb(165, 214, 255),
+            syn_number: Color::Rgb(121, 192, 255),
+            syn_comment: Color::Rgb(125, 133, 144),
+            syn_operator: Color::Rgb(255, 123, 114),
+            syn_punctuation: Color::Rgb(201, 209, 217),
+            syn_constant: Color::Rgb(121, 192, 255),
+            syn_property: Color::Rgb(121, 192, 255),
+            syn_attribute: Color::Rgb(255, 166, 87),
+        }
+    }
+
+    /// Kanagawa theme.
+    pub fn kanagawa() -> Self {
+        Self {
+            bg_dark: Color::Rgb(31, 31, 40),
+            bg_surface: Color::Rgb(42, 42, 54),
+            bg_elevated: Color::Rgb(54, 54, 70),
+            bg_selected: Color::Rgb(73, 73, 95),
+
+            border_dim: Color::Rgb(54, 54, 70),
+            border_active: Color::Rgb(192, 163, 142),
+            gutter_sep: Color::Rgb(42, 42, 54),
+            pane_divider: Color::Rgb(54, 54, 70),
+
+            text_faint: Color::Rgb(84, 84, 109),
+            text_muted: Color::Rgb(114, 114, 135),
+            text_dim: Color::Rgb(150, 150, 168),
+            text_normal: Color::Rgb(220, 215, 186),
+            text_bright: Color::Rgb(255, 255, 255),
+
+            accent: Color::Rgb(192, 163, 142),
+            accent_dim: Color::Rgb(126, 156, 160),
+
+            diff_delete_bg: Color::Rgb(55, 35, 40),
+            diff_insert_bg: Color::Rgb(35, 55, 45),
+            diff_empty_bg: Color::Rgb(42, 42, 54),
+            inline_delete_bg: Color::Rgb(95, 55, 60),
+            inline_insert_bg: Color::Rgb(55, 95, 65),
+
+            success: Color::Rgb(152, 187, 108),
+            error: Color::Rgb(195, 64, 67),
+            warning: Color::Rgb(255, 169, 88),
+
+            syn_keyword: Color::Rgb(149, 127, 184),
+            syn_type: Color::Rgb(122, 170, 153),
+            syn_function: Color::Rgb(126, 156, 160),
+            syn_string: Color::Rgb(152, 187, 108),
+            syn_number: Color::Rgb(208, 126, 139),
+            syn_comment: Color::Rgb(114, 114, 135),
+            syn_operator: Color::Rgb(192, 163, 142),
+            syn_punctuation: Color::Rgb(156, 154, 141),
+            syn_constant: Color::Rgb(255, 169, 88),
+            syn_property: Color::Rgb(126, 156, 160),
+            syn_attribute: Color::Rgb(122, 170, 153),
+        }
+    }
+
+    /// Everforest theme.
+    pub fn everforest() -> Self {
+        Self {
+            bg_dark: Color::Rgb(47, 53, 55),
+            bg_surface: Color::Rgb(52, 59, 61),
+            bg_elevated: Color::Rgb(59, 66, 68),
+            bg_selected: Color::Rgb(78, 86, 89),
+
+            border_dim: Color::Rgb(59, 66, 68),
+            border_active: Color::Rgb(163, 190, 140),
+            gutter_sep: Color::Rgb(52, 59, 61),
+            pane_divider: Color::Rgb(59, 66, 68),
+
+            text_faint: Color::Rgb(78, 86, 89),
+            text_muted: Color::Rgb(127, 132, 120),
+            text_dim: Color::Rgb(157, 163, 147),
+            text_normal: Color::Rgb(211, 198, 170),
+            text_bright: Color::Rgb(255, 255, 255),
+
+            accent: Color::Rgb(163, 190, 140),
+            accent_dim: Color::Rgb(131, 165, 152),
+
+            diff_delete_bg: Color::Rgb(60, 45, 45),
+            diff_insert_bg: Color::Rgb(45, 60, 50),
+            diff_empty_bg: Color::Rgb(52, 59, 61),
+            inline_delete_bg: Color::Rgb(100, 65, 65),
+            inline_insert_bg: Color::Rgb(65, 100, 70),
+
+            success: Color::Rgb(163, 190, 140),
+            error: Color::Rgb(230, 126, 128),
+            warning: Color::Rgb(219, 188, 127),
+
+            syn_keyword: Color::Rgb(230, 126, 128),
+            syn_type: Color::Rgb(219, 188, 127),
+            syn_function: Color::Rgb(163, 190, 140),
+            syn_string: Color::Rgb(163, 190, 140),
+            syn_number: Color::Rgb(214, 153, 182),
+            syn_comment: Color::Rgb(127, 132, 120),
+            syn_operator: Color::Rgb(230, 152, 117),
+            syn_punctuation: Color::Rgb(157, 163, 147),
+            syn_constant: Color::Rgb(214, 153, 182),
+            syn_property: Color::Rgb(131, 165, 152),
+            syn_attribute: Color::Rgb(219, 188, 127),
+        }
+    }
+
+    /// Night Owl theme.
+    pub fn nightowl() -> Self {
+        Self {
+            bg_dark: Color::Rgb(1, 22, 39),
+            bg_surface: Color::Rgb(1, 32, 49),
+            bg_elevated: Color::Rgb(1, 42, 59),
+            bg_selected: Color::Rgb(14, 52, 69),
+
+            border_dim: Color::Rgb(14, 52, 69),
+            border_active: Color::Rgb(130, 170, 255),
+            gutter_sep: Color::Rgb(1, 32, 49),
+            pane_divider: Color::Rgb(14, 52, 69),
+
+            text_faint: Color::Rgb(65, 100, 130),
+            text_muted: Color::Rgb(100, 138, 168),
+            text_dim: Color::Rgb(145, 172, 192),
+            text_normal: Color::Rgb(214, 222, 235),
+            text_bright: Color::Rgb(255, 255, 255),
+
+            accent: Color::Rgb(130, 170, 255),
+            accent_dim: Color::Rgb(127, 219, 202),
+
+            diff_delete_bg: Color::Rgb(40, 25, 35),
+            diff_insert_bg: Color::Rgb(15, 50, 45),
+            diff_empty_bg: Color::Rgb(1, 32, 49),
+            inline_delete_bg: Color::Rgb(80, 40, 55),
+            inline_insert_bg: Color::Rgb(30, 90, 75),
+
+            success: Color::Rgb(34, 218, 166),
+            error: Color::Rgb(239, 83, 80),
+            warning: Color::Rgb(255, 203, 139),
+
+            syn_keyword: Color::Rgb(199, 146, 234),
+            syn_type: Color::Rgb(255, 203, 139),
+            syn_function: Color::Rgb(130, 170, 255),
+            syn_string: Color::Rgb(173, 219, 103),
+            syn_number: Color::Rgb(247, 140, 108),
+            syn_comment: Color::Rgb(100, 138, 168),
+            syn_operator: Color::Rgb(127, 219, 202),
+            syn_punctuation: Color::Rgb(214, 222, 235),
+            syn_constant: Color::Rgb(247, 140, 108),
+            syn_property: Color::Rgb(127, 219, 202),
+            syn_attribute: Color::Rgb(255, 203, 139),
+        }
+    }
+
+    /// Ayu Dark theme.
+    pub fn ayu() -> Self {
+        Self {
+            bg_dark: Color::Rgb(10, 14, 20),
+            bg_surface: Color::Rgb(15, 20, 28),
+            bg_elevated: Color::Rgb(25, 30, 40),
+            bg_selected: Color::Rgb(35, 45, 60),
+
+            border_dim: Color::Rgb(25, 30, 40),
+            border_active: Color::Rgb(232, 176, 56),
+            gutter_sep: Color::Rgb(20, 25, 35),
+            pane_divider: Color::Rgb(25, 30, 40),
+
+            text_faint: Color::Rgb(50, 60, 75),
+            text_muted: Color::Rgb(90, 105, 125),
+            text_dim: Color::Rgb(130, 145, 165),
+            text_normal: Color::Rgb(203, 204, 198),
+            text_bright: Color::Rgb(255, 255, 255),
+
+            accent: Color::Rgb(232, 176, 56),
+            accent_dim: Color::Rgb(57, 186, 230),
+
+            diff_delete_bg: Color::Rgb(45, 25, 30),
+            diff_insert_bg: Color::Rgb(25, 45, 35),
+            diff_empty_bg: Color::Rgb(15, 20, 28),
+            inline_delete_bg: Color::Rgb(85, 45, 50),
+            inline_insert_bg: Color::Rgb(45, 85, 55),
+
+            success: Color::Rgb(170, 217, 76),
+            error: Color::Rgb(255, 51, 51),
+            warning: Color::Rgb(232, 176, 56),
+
+            syn_keyword: Color::Rgb(255, 143, 64),
+            syn_type: Color::Rgb(89, 201, 228),
+            syn_function: Color::Rgb(255, 185, 100),
+            syn_string: Color::Rgb(170, 217, 76),
+            syn_number: Color::Rgb(232, 176, 56),
+            syn_comment: Color::Rgb(90, 105, 125),
+            syn_operator: Color::Rgb(255, 143, 64),
+            syn_punctuation: Color::Rgb(130, 145, 165),
+            syn_constant: Color::Rgb(255, 238, 153),
+            syn_property: Color::Rgb(89, 201, 228),
+            syn_attribute: Color::Rgb(255, 185, 100),
+        }
+    }
+
+    /// Palenight theme.
+    pub fn palenight() -> Self {
+        Self {
+            bg_dark: Color::Rgb(41, 45, 62),
+            bg_surface: Color::Rgb(48, 52, 70),
+            bg_elevated: Color::Rgb(58, 63, 82),
+            bg_selected: Color::Rgb(75, 81, 105),
+
+            border_dim: Color::Rgb(58, 63, 82),
+            border_active: Color::Rgb(199, 146, 234),
+            gutter_sep: Color::Rgb(48, 52, 70),
+            pane_divider: Color::Rgb(58, 63, 82),
+
+            text_faint: Color::Rgb(75, 81, 105),
+            text_muted: Color::Rgb(103, 110, 149),
+            text_dim: Color::Rgb(140, 147, 177),
+            text_normal: Color::Rgb(166, 172, 205),
+            text_bright: Color::Rgb(255, 255, 255),
+
+            accent: Color::Rgb(199, 146, 234),
+            accent_dim: Color::Rgb(130, 170, 255),
+
+            diff_delete_bg: Color::Rgb(55, 35, 45),
+            diff_insert_bg: Color::Rgb(35, 55, 45),
+            diff_empty_bg: Color::Rgb(48, 52, 70),
+            inline_delete_bg: Color::Rgb(95, 55, 65),
+            inline_insert_bg: Color::Rgb(55, 95, 65),
+
+            success: Color::Rgb(195, 232, 141),
+            error: Color::Rgb(255, 85, 114),
+            warning: Color::Rgb(255, 203, 107),
+
+            syn_keyword: Color::Rgb(199, 146, 234),
+            syn_type: Color::Rgb(255, 203, 107),
+            syn_function: Color::Rgb(130, 170, 255),
+            syn_string: Color::Rgb(195, 232, 141),
+            syn_number: Color::Rgb(247, 140, 108),
+            syn_comment: Color::Rgb(103, 110, 149),
+            syn_operator: Color::Rgb(137, 221, 255),
+            syn_punctuation: Color::Rgb(140, 147, 177),
+            syn_constant: Color::Rgb(247, 140, 108),
+            syn_property: Color::Rgb(137, 221, 255),
+            syn_attribute: Color::Rgb(255, 203, 107),
+        }
+    }
+
+    /// Zenburn theme.
+    pub fn zenburn() -> Self {
+        Self {
+            bg_dark: Color::Rgb(63, 63, 63),
+            bg_surface: Color::Rgb(74, 74, 74),
+            bg_elevated: Color::Rgb(85, 85, 85),
+            bg_selected: Color::Rgb(96, 96, 96),
+
+            border_dim: Color::Rgb(85, 85, 85),
+            border_active: Color::Rgb(220, 163, 163),
+            gutter_sep: Color::Rgb(74, 74, 74),
+            pane_divider: Color::Rgb(85, 85, 85),
+
+            text_faint: Color::Rgb(96, 96, 96),
+            text_muted: Color::Rgb(124, 124, 110),
+            text_dim: Color::Rgb(156, 156, 140),
+            text_normal: Color::Rgb(220, 220, 204),
+            text_bright: Color::Rgb(255, 255, 255),
+
+            accent: Color::Rgb(220, 163, 163),
+            accent_dim: Color::Rgb(140, 208, 211),
+
+            diff_delete_bg: Color::Rgb(80, 55, 55),
+            diff_insert_bg: Color::Rgb(55, 80, 65),
+            diff_empty_bg: Color::Rgb(74, 74, 74),
+            inline_delete_bg: Color::Rgb(120, 75, 75),
+            inline_insert_bg: Color::Rgb(75, 120, 85),
+
+            success: Color::Rgb(127, 159, 127),
+            error: Color::Rgb(204, 147, 147),
+            warning: Color::Rgb(223, 175, 143),
+
+            syn_keyword: Color::Rgb(240, 223, 175),
+            syn_type: Color::Rgb(239, 239, 175),
+            syn_function: Color::Rgb(239, 239, 175),
+            syn_string: Color::Rgb(204, 147, 147),
+            syn_number: Color::Rgb(140, 208, 211),
+            syn_comment: Color::Rgb(127, 159, 127),
+            syn_operator: Color::Rgb(240, 239, 208),
+            syn_punctuation: Color::Rgb(156, 156, 140),
+            syn_constant: Color::Rgb(220, 163, 163),
+            syn_property: Color::Rgb(140, 208, 211),
+            syn_attribute: Color::Rgb(223, 175, 143),
         }
     }
 }
