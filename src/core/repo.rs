@@ -352,11 +352,18 @@ pub fn list_commit_files(root: &RepoRoot, commit: &str) -> Result<Vec<ChangedFil
     list_changed_files_between(root, &parent, commit)
 }
 
-/// List changed files between a base ref and HEAD (including working tree).
-pub fn list_changed_files_from_base(
+/// Result of a base comparison.
+#[derive(Debug, Clone)]
+pub struct BaseComparison {
+    pub merge_base: String,
+    pub files: Vec<ChangedFile>,
+}
+
+/// List changed files between a base ref and HEAD (including working tree), returning the merge-base SHA.
+pub fn list_changed_files_from_base_with_merge_base(
     root: &RepoRoot,
     base: &str,
-) -> Result<Vec<ChangedFile>, RepoError> {
+) -> Result<BaseComparison, RepoError> {
     // Get merge-base to find common ancestor
     let output = Command::new("git")
         .args(["merge-base", base, "HEAD"])
@@ -391,7 +398,19 @@ pub fn list_changed_files_from_base(
 
     let mut result: Vec<_> = files.into_values().collect();
     result.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(result)
+
+    Ok(BaseComparison {
+        merge_base,
+        files: result,
+    })
+}
+
+/// List changed files between a base ref and HEAD (including working tree).
+pub fn list_changed_files_from_base(
+    root: &RepoRoot,
+    base: &str,
+) -> Result<Vec<ChangedFile>, RepoError> {
+    Ok(list_changed_files_from_base_with_merge_base(root, base)?.files)
 }
 
 /// Parse `git diff --name-status -z` output.
