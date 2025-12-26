@@ -436,14 +436,17 @@ impl HighlighterTrait for TreeSitterHighlighter {
             match event {
                 Ok(HighlightEvent::Source { start, end }) => {
                     let style = *style_stack.last().unwrap_or(&StyleId::Default);
-                    if start < end {
+                    // Bounds check to prevent reading past source
+                    let safe_start = start.min(source.len());
+                    let safe_end = end.min(source.len());
+                    if safe_start < safe_end {
                         spans.push(StyledSpan {
-                            start,
-                            end,
+                            start: safe_start,
+                            end: safe_end,
                             style_id: style,
                         });
                     }
-                    current_pos = end;
+                    current_pos = safe_end;
                 }
                 Ok(HighlightEvent::HighlightStart(highlight)) => {
                     let name = HIGHLIGHT_NAMES.get(highlight.0).copied().unwrap_or("");
