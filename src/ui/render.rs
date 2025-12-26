@@ -13,7 +13,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::core::{ChangeKind, CommentStatus, FileChangeKind, ViewedStore};
+use crate::core::{ChangeKind, CommentStatus, FileChangeKind, InlineSpan, ViewedStore};
 use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId};
 use crate::theme::Theme;
 
@@ -482,6 +482,79 @@ fn render_pane_divider(frame: &mut Frame, area: Rect, theme: &Theme) {
 
 /// Gutter: 4 (line num) + 2 (separator) = 6 chars
 const GUTTER_WIDTH: usize = 6;
+/// Tab stop width for display alignment.
+const TAB_WIDTH: usize = 8;
+
+fn tab_width_at(col: usize) -> usize {
+    let rem = col % TAB_WIDTH;
+    if rem == 0 { TAB_WIDTH } else { TAB_WIDTH - rem }
+}
+
+fn visible_tab_spaces(col: usize, scroll_x: usize, remaining: usize) -> (usize, usize) {
+    let width = tab_width_at(col);
+    if remaining == 0 {
+        return (0, width);
+    }
+
+    let skip = scroll_x.saturating_sub(col);
+    if skip >= width {
+        return (0, width);
+    }
+
+    let available = width - skip;
+    let take = available.min(remaining);
+    (take, width)
+}
+
+struct SpanBuilder {
+    spans: Vec<Span<'static>>,
+    pending_style: Option<Style>,
+    pending_text: String,
+}
+
+impl SpanBuilder {
+    fn new() -> Self {
+        Self {
+            spans: Vec::new(),
+            pending_style: None,
+            pending_text: String::new(),
+        }
+    }
+
+    fn push_char(&mut self, ch: char, style: Style) {
+        if self.pending_style != Some(style) {
+            self.flush();
+            self.pending_style = Some(style);
+        }
+        self.pending_text.push(ch);
+    }
+
+    fn push_spaces(&mut self, count: usize, style: Style) {
+        if count == 0 {
+            return;
+        }
+        if self.pending_style != Some(style) {
+            self.flush();
+            self.pending_style = Some(style);
+        }
+        self.pending_text.extend(std::iter::repeat(' ').take(count));
+    }
+
+    fn flush(&mut self) {
+        if !self.pending_text.is_empty() {
+            let style = self.pending_style.unwrap_or_default();
+            self.spans.push(Span::styled(
+                std::mem::take(&mut self.pending_text),
+                style,
+            ));
+        }
+    }
+
+    fn finish(mut self) -> Vec<Span<'static>> {
+        self.flush();
+        self.spans
+    }
+}
 
 /// Compute the sticky scope for a pane based on the first visible source line.
 fn compute_sticky_scope<'a>(
@@ -508,6 +581,101 @@ fn compute_sticky_scope<'a>(
         Some(scope)
     } else {
         None
+    }
+}
+
+fn render_plain_span(
+    builder: &mut SpanBuilder,
+    text: &str,
+    style: Style,
+    scroll_x: usize,
+    max_content: usize,
+    col_pos: &mut usize,
+    visible_len: &mut usize,
+) {
+    if max_content == 0 {
+        return;
+    }
+
+    for ch in text.chars() {
+        if *visible_len >= max_content {
+            break;
+        }
+
+        if ch == '\t' {
+            let remaining = max_content.saturating_sub(*visible_len);
+            let (emit, advance) = visible_tab_spaces(*col_pos, scroll_x, remaining);
+            if emit > 0 {
+                builder.push_spaces(emit, style);
+                *visible_len += emit;
+            }
+            *col_pos += advance;
+            continue;
+        }
+
+        let ch = sanitize_char(ch);
+        if *col_pos >= scroll_x {
+            if *visible_len + 1 > max_content {
+                break;
+            }
+            builder.push_char(ch, style);
+            *visible_len += 1;
+        }
+        *col_pos += 1;
+    }
+}
+
+fn render_inline_span(
+    builder: &mut SpanBuilder,
+    text: &str,
+    base_style: Style,
+    bg_color: Color,
+    inline_bg: Color,
+    inline_spans: &[InlineSpan],
+    scroll_x: usize,
+    max_content: usize,
+    col_pos: &mut usize,
+    visible_len: &mut usize,
+    start_byte: usize,
+) {
+    if max_content == 0 {
+        return;
+    }
+
+    let mut byte_offset = start_byte;
+
+    for ch in text.chars() {
+        if *visible_len >= max_content {
+            break;
+        }
+
+        let is_changed = inline_spans.iter().any(|s| {
+            s.changed && byte_offset >= s.start && byte_offset < s.end
+        });
+        let bg = if is_changed { inline_bg } else { bg_color };
+        let style = base_style.bg(bg);
+
+        if ch == '\t' {
+            let remaining = max_content.saturating_sub(*visible_len);
+            let (emit, advance) = visible_tab_spaces(*col_pos, scroll_x, remaining);
+            if emit > 0 {
+                builder.push_spaces(emit, style);
+                *visible_len += emit;
+            }
+            *col_pos += advance;
+        } else {
+            let ch = sanitize_char(ch);
+            if *col_pos >= scroll_x {
+                if *visible_len + 1 > max_content {
+                    break;
+                }
+                builder.push_char(ch, style);
+                *visible_len += 1;
+            }
+            *col_pos += 1;
+        }
+
+        byte_offset += ch.len_utf8();
     }
 }
 
@@ -591,22 +759,21 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             .unwrap_or_else(|| "    ".to_string());
 
         // Build syntax-highlighted content spans with truncation
-        let mut code_spans: Vec<Span> = Vec::new();
+        let mut builder = SpanBuilder::new();
         let mut visible_len = 0usize;
 
         if !content.is_empty() && max_content > 0 {
             let hl_spans = app.highlighter.highlight(app.current_lang, content);
             let scroll_x = app.scroll_x;
-            let mut char_pos = 0usize;
+            let mut col_pos = 0usize;
 
-            'outer: for hl in hl_spans {
+            for hl in hl_spans {
+                if visible_len >= max_content {
+                    break;
+                }
+
                 let span_text = content.get(hl.start..hl.end).unwrap_or("");
-                let span_char_count = span_text.chars().count();
-                let span_end_char = char_pos + span_char_count;
-
-                // Skip spans entirely before scroll offset
-                if span_end_char <= scroll_x {
-                    char_pos = span_end_char;
+                if span_text.is_empty() {
                     continue;
                 }
 
@@ -620,87 +787,40 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                 });
 
                 if !has_inline_changes {
-                    // Fast path: no inline changes, emit whole span (truncated)
-                    let skip = scroll_x.saturating_sub(char_pos);
-                    let remaining = max_content.saturating_sub(visible_len);
-                    let text: String = span_text
-                        .chars()
-                        .skip(skip)
-                        .take(remaining)
-                        .map(sanitize_char)
-                        .collect();
-                    if !text.is_empty() {
-                        visible_len += text.chars().count();
-                        code_spans.push(Span::styled(text, Style::default().fg(fg).bg(bg_color)));
-                    }
-                    if visible_len >= max_content {
-                        break 'outer;
-                    }
-                } else {
-                    // Slow path: split by inline regions for word-level highlighting
-                    let mut byte_offset = hl.start;
-                    let mut local_char = 0usize;
-
-                    let mut pending_style: Option<Style> = None;
-                    let mut pending_text = String::new();
-
-                    for ch in span_text.chars() {
-                        let global_char = char_pos + local_char;
-
-                        // Skip chars before scroll
-                        if global_char < scroll_x {
-                            byte_offset += ch.len_utf8();
-                            local_char += 1;
-                            continue;
-                        }
-
-                        // Stop if we've hit width limit
-                        if visible_len >= max_content {
-                            break;
-                        }
-
-                        // Determine if this byte is in a changed region
-                        let is_changed = inline_spans.is_some_and(|spans| {
-                            spans
-                                .iter()
-                                .any(|s| s.changed && byte_offset >= s.start && byte_offset < s.end)
-                        });
-                        let char_bg = if is_changed { inline_bg } else { bg_color };
-                        let style = Style::default().fg(fg).bg(char_bg);
-
-                        let same_style = pending_style.as_ref().is_some_and(|ps| ps == &style);
-                        if !same_style {
-                            if !pending_text.is_empty() {
-                                code_spans.push(Span::styled(
-                                    std::mem::take(&mut pending_text),
-                                    pending_style.take().unwrap_or_default(),
-                                ));
-                            }
-                            pending_style = Some(style);
-                        }
-
-                        pending_text.push(sanitize_char(ch));
-                        visible_len += 1;
-
-                        byte_offset += ch.len_utf8();
-                        local_char += 1;
-                    }
-
-                    if !pending_text.is_empty() {
-                        code_spans.push(Span::styled(
-                            pending_text,
-                            pending_style.unwrap_or_default(),
-                        ));
-                    }
-
-                    if visible_len >= max_content {
-                        break 'outer;
-                    }
+                    let style = Style::default().fg(fg).bg(bg_color);
+                    render_plain_span(
+                        &mut builder,
+                        span_text,
+                        style,
+                        scroll_x,
+                        max_content,
+                        &mut col_pos,
+                        &mut visible_len,
+                    );
+                } else if let Some(spans) = inline_spans {
+                    let base_style = Style::default().fg(fg);
+                    render_inline_span(
+                        &mut builder,
+                        span_text,
+                        base_style,
+                        bg_color,
+                        inline_bg,
+                        spans,
+                        scroll_x,
+                        max_content,
+                        &mut col_pos,
+                        &mut visible_len,
+                        hl.start,
+                    );
                 }
 
-                char_pos = span_end_char;
+                if visible_len >= max_content {
+                    break;
+                }
             }
         }
+
+        let code_spans = builder.finish();
 
         max_visible_len = max_visible_len.max(visible_len);
         rendered.push(RenderedLine {
@@ -867,7 +987,6 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
 /// Sanitize control characters.
 fn sanitize_char(c: char) -> char {
     match c {
-        '\t' => '\t',
         '\x00'..='\x1f' | '\x7f' => '\u{FFFD}',
         _ => c,
     }
@@ -1318,4 +1437,53 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     let line = Line::from(spans);
     let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_surface));
     frame.render_widget(para, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spans_text(spans: &[Span<'static>]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn tab_expands_to_next_stop() {
+        let mut builder = SpanBuilder::new();
+        let mut col_pos = 0usize;
+        let mut visible_len = 0usize;
+
+        render_plain_span(
+            &mut builder,
+            "\tfoo",
+            Style::default(),
+            0,
+            20,
+            &mut col_pos,
+            &mut visible_len,
+        );
+
+        let text = spans_text(&builder.finish());
+        assert_eq!(text, "        foo");
+    }
+
+    #[test]
+    fn tab_respects_scroll() {
+        let mut builder = SpanBuilder::new();
+        let mut col_pos = 0usize;
+        let mut visible_len = 0usize;
+
+        render_plain_span(
+            &mut builder,
+            "\tfoo",
+            Style::default(),
+            4,
+            20,
+            &mut col_pos,
+            &mut visible_len,
+        );
+
+        let text = spans_text(&builder.finish());
+        assert_eq!(text, "    foo");
+    }
 }
