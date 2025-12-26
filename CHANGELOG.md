@@ -2,6 +2,12 @@
 
 All notable changes to quickdiff are documented here.
 
+## [0.7.2] - 2025-12-25
+
+### Fixed
+- Tabs now render with proper width in diff panes, avoiding overflow on Go files.
+- Guard highlight spans against out-of-bounds tree-sitter events.
+
 ## [0.7.1] - 2025-12-25
 
 ### Added
@@ -90,5 +96,6 @@ Initial public release.
 
 ---
 
+[0.7.2]: https://github.com/user/quickdiff/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/user/quickdiff/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/user/quickdiff/releases/tag/v0.7.0
