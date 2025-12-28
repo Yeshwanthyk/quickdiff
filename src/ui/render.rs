@@ -487,7 +487,11 @@ const TAB_WIDTH: usize = 8;
 
 fn tab_width_at(col: usize) -> usize {
     let rem = col % TAB_WIDTH;
-    if rem == 0 { TAB_WIDTH } else { TAB_WIDTH - rem }
+    if rem == 0 {
+        TAB_WIDTH
+    } else {
+        TAB_WIDTH - rem
+    }
 }
 
 fn visible_tab_spaces(col: usize, scroll_x: usize, remaining: usize) -> (usize, usize) {
@@ -543,10 +547,8 @@ impl SpanBuilder {
     fn flush(&mut self) {
         if !self.pending_text.is_empty() {
             let style = self.pending_style.unwrap_or_default();
-            self.spans.push(Span::styled(
-                std::mem::take(&mut self.pending_text),
-                style,
-            ));
+            self.spans
+                .push(Span::styled(std::mem::take(&mut self.pending_text), style));
         }
     }
 
@@ -625,6 +627,7 @@ fn render_plain_span(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_inline_span(
     builder: &mut SpanBuilder,
     text: &str,
@@ -649,9 +652,9 @@ fn render_inline_span(
             break;
         }
 
-        let is_changed = inline_spans.iter().any(|s| {
-            s.changed && byte_offset >= s.start && byte_offset < s.end
-        });
+        let is_changed = inline_spans
+            .iter()
+            .any(|s| s.changed && byte_offset >= s.start && byte_offset < s.end);
         let bg = if is_changed { inline_bg } else { bg_color };
         let style = base_style.bg(bg);
 

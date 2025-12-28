@@ -323,6 +323,7 @@ fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
 }
 
 /// Load content from HEAD for a given path.
+/// Returns error if file exceeds `MAX_FILE_SIZE`.
 #[must_use = "this returns a Result that should be checked"]
 pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, RepoError> {
     let output = Command::new("git")
@@ -333,6 +334,15 @@ pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, Rep
     if !output.status.success() {
         // File might not exist in HEAD (new file)
         return Ok(Vec::new());
+    }
+
+    // OOM protection: check size before returning
+    let size = output.stdout.len() as u64;
+    if size > MAX_FILE_SIZE {
+        return Err(RepoError::FileTooLarge {
+            size,
+            max: MAX_FILE_SIZE,
+        });
     }
 
     Ok(output.stdout)
@@ -369,6 +379,7 @@ pub fn load_working_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, 
 }
 
 /// Load content from a specific git revision.
+/// Returns error if file exceeds `MAX_FILE_SIZE`.
 #[must_use = "this returns a Result that should be checked"]
 pub fn load_revision_content(
     root: &RepoRoot,
@@ -383,6 +394,15 @@ pub fn load_revision_content(
     if !output.status.success() {
         // File might not exist in this revision
         return Ok(Vec::new());
+    }
+
+    // OOM protection: check size before returning
+    let size = output.stdout.len() as u64;
+    if size > MAX_FILE_SIZE {
+        return Err(RepoError::FileTooLarge {
+            size,
+            max: MAX_FILE_SIZE,
+        });
     }
 
     Ok(output.stdout)

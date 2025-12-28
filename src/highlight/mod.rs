@@ -436,7 +436,26 @@ impl HighlighterTrait for TreeSitterHighlighter {
             match event {
                 Ok(HighlightEvent::Source { start, end }) => {
                     let style = *style_stack.last().unwrap_or(&StyleId::Default);
-                    // Bounds check to prevent reading past source
+                    // Debug assertions to catch grammar bugs during development
+                    debug_assert!(
+                        start <= source.len(),
+                        "tree-sitter grammar returned out-of-bounds start: {} > {}",
+                        start,
+                        source.len()
+                    );
+                    debug_assert!(
+                        end <= source.len(),
+                        "tree-sitter grammar returned out-of-bounds end: {} > {}",
+                        end,
+                        source.len()
+                    );
+                    debug_assert!(
+                        start <= end,
+                        "tree-sitter grammar returned inverted range: {} > {}",
+                        start,
+                        end
+                    );
+                    // Bounds check to prevent reading past source (graceful in release)
                     let safe_start = start.min(source.len());
                     let safe_end = end.min(source.len());
                     if safe_start < safe_end {

@@ -81,7 +81,23 @@ fn worker_loop(
             req = next;
         }
 
-        let response = compute_diff_payload(&repo, req);
+        let id = req.id;
+        let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compute_diff_payload(&repo, req)
+        })) {
+            Ok(resp) => resp,
+            Err(panic) => {
+                // Extract panic message if possible
+                let message = if let Some(s) = panic.downcast_ref::<&str>() {
+                    format!("worker panic: {}", s)
+                } else if let Some(s) = panic.downcast_ref::<String>() {
+                    format!("worker panic: {}", s)
+                } else {
+                    "worker panic: unknown error".to_string()
+                };
+                DiffLoadResponse::Error { id, message }
+            }
+        };
         let _ = response_tx.send(response);
     }
 }
