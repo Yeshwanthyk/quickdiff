@@ -81,6 +81,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::SelectTheme {
         render_theme_selector(frame, app);
     }
+
+    if app.mode == Mode::Help {
+        render_help_overlay(frame, app);
+    }
 }
 
 // ============================================================================
@@ -1225,6 +1229,123 @@ fn render_theme_selector(frame: &mut Frame, app: &App) {
 
     // Pad remaining lines
     while lines.len() < visible_height {
+        lines.push(Line::from(Span::styled(
+            "",
+            Style::default().bg(app.theme.bg_elevated),
+        )));
+    }
+
+    let para = Paragraph::new(lines).style(Style::default().bg(app.theme.bg_elevated));
+    frame.render_widget(para, inner);
+}
+
+// ============================================================================
+// Help Overlay
+// ============================================================================
+
+fn render_help_overlay(frame: &mut Frame, app: &App) {
+    use ratatui::widgets::Clear;
+
+    let entries = [
+        ("j/k or ↑/↓", "Navigate files / scroll vertically"),
+        ("h/l or ←/→", "Scroll horizontally in diff"),
+        ("g / G", "Jump to start / end of file"),
+        ("Tab, 1, 2", "Switch focus between sidebar/diff"),
+        ("Space", "Toggle viewed & jump to next file"),
+        ("{ / }", "Previous / next hunk"),
+        ("/", "Open sidebar fuzzy filter"),
+        ("T", "Theme selector"),
+        ("c / C", "Add or view comments"),
+        ("[", "Toggle old pane fullscreen"),
+        ("]", "Toggle new pane fullscreen"),
+        ("?", "Close this help overlay"),
+        ("q or Ctrl+C", "Quit quickdiff"),
+    ];
+
+    let area = frame.area();
+    let max_width = area.width.saturating_sub(2).max(1);
+    let width = 70.min(max_width);
+    let needed_height = (entries.len() as u16 + 6).max(10);
+    let max_height = area.height.saturating_sub(2).max(1);
+    let height = needed_height.min(max_height);
+
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let overlay_area = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, overlay_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.accent))
+        .title(Span::styled(
+            " Help ",
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.bg_elevated));
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    if inner.height == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Common keybindings",
+        Style::default()
+            .fg(app.theme.accent)
+            .bg(app.theme.bg_elevated)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Press ? again, Esc, or q to close.",
+        Style::default()
+            .fg(app.theme.text_muted)
+            .bg(app.theme.bg_elevated),
+    )));
+    lines.push(Line::from(Span::styled(
+        "",
+        Style::default().bg(app.theme.bg_elevated),
+    )));
+
+    for (key, desc) in entries {
+        let mut spans = Vec::new();
+        let shortcut = format!("{:<16}", key);
+        spans.push(Span::styled(
+            shortcut,
+            Style::default()
+                .fg(app.theme.accent)
+                .bg(app.theme.bg_elevated),
+        ));
+        spans.push(Span::styled(
+            desc,
+            Style::default()
+                .fg(app.theme.text_normal)
+                .bg(app.theme.bg_elevated),
+        ));
+        lines.push(Line::from(spans));
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "Mouse",
+            Style::default()
+                .fg(app.theme.accent)
+                .bg(app.theme.bg_elevated),
+        ),
+        Span::styled(
+            " Click to focus, scroll wheel to move.",
+            Style::default()
+                .fg(app.theme.text_normal)
+                .bg(app.theme.bg_elevated),
+        ),
+    ]));
+
+    while lines.len() < inner.height as usize {
         lines.push(Line::from(Span::styled(
             "",
             Style::default().bg(app.theme.bg_elevated),

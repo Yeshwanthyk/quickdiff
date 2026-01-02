@@ -56,6 +56,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.open_theme_selector();
             return true;
         }
+        KeyCode::Char('?') => {
+            app.open_help();
+            return true;
+        }
         _ => {}
     }
 
