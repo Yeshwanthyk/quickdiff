@@ -17,7 +17,7 @@ use crate::core::{ChangeKind, CommentStatus, FileChangeKind, InlineSpan, ViewedS
 use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId};
 use crate::theme::Theme;
 
-use super::app::{App, Focus, Mode};
+use super::app::{App, DiffPaneMode, Focus, Mode};
 
 // ============================================================================
 // Constants
@@ -419,10 +419,16 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(app.theme.text_muted)
     };
 
+    let title = match app.diff_pane_mode {
+        DiffPaneMode::Both => " Diff ",
+        DiffPaneMode::OldOnly => " Diff (old only) ",
+        DiffPaneMode::NewOnly => " Diff (new only) ",
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(Span::styled(" Diff ", title_style))
+        .title(Span::styled(title, title_style))
         .style(Style::default().bg(app.theme.bg_dark));
 
     let inner = block.inner(area);
@@ -456,19 +462,27 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    // Split into old/new panes with divider
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Length(1), // Divider
-            Constraint::Percentage(50),
-        ])
-        .split(inner);
-
-    render_diff_pane(frame, app, panes[0], true); // Old
-    render_pane_divider(frame, panes[1], &app.theme); // Divider
-    render_diff_pane(frame, app, panes[2], false); // New
+    match app.diff_pane_mode {
+        DiffPaneMode::Both => {
+            let panes = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(50),
+                    Constraint::Length(1),
+                    Constraint::Percentage(50),
+                ])
+                .split(inner);
+            render_diff_pane(frame, app, panes[0], true);
+            render_pane_divider(frame, panes[1], &app.theme);
+            render_diff_pane(frame, app, panes[2], false);
+        }
+        DiffPaneMode::OldOnly => {
+            render_diff_pane(frame, app, inner, true);
+        }
+        DiffPaneMode::NewOnly => {
+            render_diff_pane(frame, app, inner, false);
+        }
+    }
 }
 
 /// Render vertical divider between old/new panes.

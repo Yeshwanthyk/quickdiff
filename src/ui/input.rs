@@ -22,6 +22,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         Mode::ViewComments => return handle_view_comments_key(app, key),
         Mode::FilterFiles => return handle_filter_key(app, key),
         Mode::SelectTheme => return handle_theme_selector_key(app, key),
+        Mode::Help => return handle_help_key(app, key),
         Mode::Normal => {}
     }
 
@@ -147,6 +148,14 @@ fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
             app.show_comments();
             true
         }
+        KeyCode::Char('[') => {
+            app.toggle_old_fullscreen();
+            true
+        }
+        KeyCode::Char(']') => {
+            app.toggle_new_fullscreen();
+            true
+        }
         _ => false,
     }
 }
@@ -252,6 +261,17 @@ fn handle_theme_selector_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         _ => true, // consume all keys in overlay
+    }
+}
+
+/// Handle keys when viewing help overlay.
+fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+            app.close_help();
+            true
+        }
+        _ => true, // swallow other keys while help is open
     }
 }
 

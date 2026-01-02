@@ -30,6 +30,18 @@ pub enum Mode {
     ViewComments,
     FilterFiles,
     SelectTheme,
+    Help,
+}
+
+/// Layout mode for diff panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffPaneMode {
+    /// Show both old and new panes.
+    Both,
+    /// Show only the old (left) pane full-width.
+    OldOnly,
+    /// Show only the new (right) pane full-width.
+    NewOnly,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +155,8 @@ pub struct App {
     pub theme_selector_idx: usize,
     /// Original theme name (for cancel).
     pub theme_original: String,
+    /// Current diff pane layout mode.
+    pub diff_pane_mode: DiffPaneMode,
 
     // File watching
     /// File system watcher for live reload.
@@ -269,6 +283,7 @@ impl App {
             theme_list: Theme::list(),
             theme_selector_idx: 0,
             theme_original: theme_name.unwrap_or("default").to_string(),
+            diff_pane_mode: DiffPaneMode::Both,
             watcher: None,
         };
 
@@ -643,6 +658,45 @@ impl App {
     pub fn set_focus(&mut self, focus: Focus) {
         if self.focus != focus {
             self.focus = focus;
+            self.dirty = true;
+        }
+    }
+
+    /// Toggle old pane fullscreen mode (old-only <-> both).
+    pub fn toggle_old_fullscreen(&mut self) {
+        let next = match self.diff_pane_mode {
+            DiffPaneMode::OldOnly => DiffPaneMode::Both,
+            _ => DiffPaneMode::OldOnly,
+        };
+        self.set_diff_pane_mode(next);
+    }
+
+    /// Toggle new pane fullscreen mode (new-only <-> both).
+    pub fn toggle_new_fullscreen(&mut self) {
+        let next = match self.diff_pane_mode {
+            DiffPaneMode::NewOnly => DiffPaneMode::Both,
+            _ => DiffPaneMode::NewOnly,
+        };
+        self.set_diff_pane_mode(next);
+    }
+
+    fn set_diff_pane_mode(&mut self, mode: DiffPaneMode) {
+        if self.diff_pane_mode != mode {
+            self.diff_pane_mode = mode;
+            self.dirty = true;
+        }
+    }
+
+    /// Open the in-app help overlay.
+    pub fn open_help(&mut self) {
+        self.mode = Mode::Help;
+        self.dirty = true;
+    }
+
+    /// Close the help overlay.
+    pub fn close_help(&mut self) {
+        if self.mode == Mode::Help {
+            self.mode = Mode::Normal;
             self.dirty = true;
         }
     }
