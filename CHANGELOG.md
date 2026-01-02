@@ -2,6 +2,15 @@
 
 All notable changes to quickdiff are documented here.
 
+## [Unreleased]
+
+### Added
+- `y` copies the selected file path to the system clipboard for quick sharing.
+- `o` opens the highlighted file in `$QUICKDIFF_EDITOR`, falling back to `$VISUAL` and `$EDITOR`.
+- `r` forces a manual reload of the working tree/base file list (or re-renders commit/range diffs).
+- `?` shows a built-in help modal listing core keybindings.
+- `[` / `]` toggle full-width old/new diff panes for focused reviews.
+
 ## [0.7.2] - 2025-12-25
 
 ### Fixed
