@@ -68,6 +68,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.copy_selected_path();
             return true;
         }
+        KeyCode::Char('o') => {
+            app.open_selected_in_editor();
+            return true;
+        }
         _ => {}
     }
 

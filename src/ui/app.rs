@@ -1,6 +1,11 @@
 //! Application state and lifecycle.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    io::{self, Write},
+    process::Command,
+};
 
 use crate::core::{
     diff_source_display, digest_hunk_changed_rows, format_anchor_summary, list_changed_files,
@@ -13,6 +18,12 @@ use crate::highlight::{query_scopes, HighlighterCache, LanguageId, ScopeInfo};
 use crate::theme::Theme;
 
 use arboard::Clipboard;
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use shell_words::split;
 
 use super::worker::{spawn_diff_worker, DiffLoadRequest, DiffLoadResponse, DiffWorker};
 
@@ -687,6 +698,98 @@ impl App {
             self.diff_pane_mode = mode;
             self.dirty = true;
         }
+    }
+
+    /// Open the selected file in the user's configured editor.
+    pub fn open_selected_in_editor(&mut self) {
+        let Some(file) = self.selected_file() else {
+            self.error_msg = Some("No file selected to open".to_string());
+            self.dirty = true;
+            return;
+        };
+
+        let path = file.path.to_absolute(&self.repo);
+        let command_parts = match Self::editor_command() {
+            Ok(parts) => parts,
+            Err(msg) => {
+                self.error_msg = Some(msg);
+                self.dirty = true;
+                return;
+            }
+        };
+
+        let (program, args) = command_parts
+            .split_first()
+            .expect("editor command is non-empty");
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        cmd.arg(&path);
+
+        if let Err(e) = Self::suspend_terminal_for_external() {
+            self.error_msg = Some(format!("Failed to release terminal: {}", e));
+            self.dirty = true;
+            return;
+        }
+
+        let status = cmd.status();
+
+        if let Err(e) = Self::resume_terminal_after_external() {
+            self.error_msg = Some(format!("Failed to restore terminal: {}", e));
+            self.dirty = true;
+            return;
+        }
+
+        match status {
+            Ok(status) => {
+                if status.success() {
+                    self.status_msg = Some(format!("Editor closed for {}", file.path.as_str()));
+                    self.error_msg = None;
+                } else {
+                    self.error_msg = Some(format!("Editor exited with code {:?}", status.code()));
+                }
+            }
+            Err(e) => {
+                self.error_msg = Some(format!("Failed to launch editor: {}", e));
+            }
+        }
+
+        self.dirty = true;
+    }
+
+    /// Determine the command used to launch the external editor.
+    fn editor_command() -> Result<Vec<String>, String> {
+        for key in ["QUICKDIFF_EDITOR", "VISUAL", "EDITOR"] {
+            if let Ok(value) = env::var(key) {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match split(trimmed) {
+                    Ok(parts) if !parts.is_empty() => return Ok(parts),
+                    Ok(_) => continue,
+                    Err(e) => {
+                        return Err(format!("Failed to parse ${}: {}", key, e));
+                    }
+                }
+            }
+        }
+        Err("Set $QUICKDIFF_EDITOR, $VISUAL, or $EDITOR to open files externally".to_string())
+    }
+
+    fn suspend_terminal_for_external() -> io::Result<()> {
+        disable_raw_mode()?;
+        execute!(io::stdout(), DisableMouseCapture)?;
+        execute!(io::stdout(), LeaveAlternateScreen)?;
+        io::stdout().flush()?;
+        Ok(())
+    }
+
+    fn resume_terminal_after_external() -> io::Result<()> {
+        execute!(io::stdout(), EnterAlternateScreen)?;
+        enable_raw_mode()?;
+        execute!(io::stdout(), EnableMouseCapture)?;
+        io::stdout().flush()?;
+        Ok(())
     }
 
     /// Copy the currently selected file path to the clipboard.
