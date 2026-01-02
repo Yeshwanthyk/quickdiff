@@ -11,7 +11,7 @@
 ## Progress Tracking
 - [x] Phase 1: GitHub CLI Wrapper Module
 - [x] Phase 2: DiffSource Extension & PR Diff Parser
-- [ ] Phase 3: PR Picker UI
+- [x] Phase 3: PR Picker UI
 - [ ] Phase 4: PR Diff Viewing Integration
 - [ ] Phase 5: PR Review Actions & Polish
 
@@ -790,11 +790,11 @@ Add `Mode::PRPicker` for browsing and selecting PRs.
 - [ ] Phase 2 automated checks pass
 
 ### Change Checklist
-- [ ] Add `PRPicker` mode to `Mode` enum
-- [ ] Add PR-related state fields to `App`
-- [ ] Add PR picker methods to `App`
-- [ ] Add input handling for PR picker mode
-- [ ] Add rendering for PR picker overlay
+- [x] Add `PRPicker` mode to `Mode` enum
+- [x] Add PR-related state fields to `App`
+- [x] Add PR picker methods to `App`
+- [x] Add input handling for PR picker mode
+- [ ] Add rendering for PR picker overlay (Phase 4)
 
 ### Changes
 

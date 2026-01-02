@@ -44,6 +44,19 @@ pub enum Mode {
     FilterFiles,
     SelectTheme,
     Help,
+    PRPicker,
+    PRAction,
+}
+
+/// Type of PR review action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PRActionType {
+    /// Approve the PR.
+    Approve,
+    /// Comment on the PR.
+    Comment,
+    /// Request changes on the PR.
+    RequestChanges,
 }
 
 /// Layout mode for diff panes.
@@ -174,6 +187,28 @@ pub struct App {
     // File watching
     /// File system watcher for live reload.
     watcher: Option<RepoWatcher>,
+
+    // PR mode state
+    /// Whether we're in PR review mode.
+    pub pr_mode: bool,
+    /// Current PR if in PR mode.
+    pub current_pr: Option<crate::core::PullRequest>,
+    /// PR file list (parsed from diff).
+    pub pr_files: Vec<crate::core::PRChangedFile>,
+    /// Available PRs for picker.
+    pub pr_list: Vec<crate::core::PullRequest>,
+    /// Loading state for PR operations.
+    pub pr_loading: bool,
+    /// PR picker filter.
+    pub pr_filter: crate::core::PRFilter,
+    /// Selected index in PR picker.
+    pub pr_picker_selected: usize,
+    /// Scroll offset in PR picker.
+    pub pr_picker_scroll: usize,
+    /// PR action draft text.
+    pub pr_action_text: String,
+    /// PR action type being composed.
+    pub pr_action_type: Option<PRActionType>,
 }
 
 fn comment_context_for_source(source: &DiffSource) -> CommentContext {
@@ -306,6 +341,16 @@ impl App {
             theme_original: theme_name.unwrap_or("default").to_string(),
             diff_pane_mode: DiffPaneMode::Both,
             watcher: None,
+            pr_mode: false,
+            current_pr: None,
+            pr_files: Vec::new(),
+            pr_list: Vec::new(),
+            pr_loading: false,
+            pr_filter: crate::core::PRFilter::default(),
+            pr_picker_selected: 0,
+            pr_picker_scroll: 0,
+            pr_action_text: String::new(),
+            pr_action_type: None,
         };
 
         // Initialize file watcher for live-reload modes (WorkingTree, Base)
@@ -1454,4 +1499,398 @@ impl App {
         self.status_msg = Some("Refreshed".to_string());
         self.dirty = true;
     }
+
+    // ========================================================================
+    // PR Picker
+    // ========================================================================
+
+    /// Open PR picker mode.
+    pub fn open_pr_picker(&mut self) {
+        if !crate::core::is_gh_available() {
+            self.error_msg = Some("GitHub CLI not available. Run 'gh auth login'".to_string());
+            self.dirty = true;
+            return;
+        }
+
+        self.mode = Mode::PRPicker;
+        self.pr_picker_selected = 0;
+        self.pr_picker_scroll = 0;
+        self.pr_loading = true;
+        self.dirty = true;
+
+        // Fetch PRs synchronously for now (could be backgrounded later)
+        self.fetch_pr_list();
+    }
+
+    /// Fetch PR list from GitHub.
+    pub fn fetch_pr_list(&mut self) {
+        self.pr_loading = true;
+        self.error_msg = None;
+
+        match crate::core::list_prs(self.repo.path(), self.pr_filter) {
+            Ok(prs) => {
+                self.pr_list = prs;
+                self.pr_loading = false;
+                if self.pr_list.is_empty() {
+                    self.status_msg = Some("No PRs found".to_string());
+                }
+            }
+            Err(e) => {
+                self.pr_list.clear();
+                self.pr_loading = false;
+                self.error_msg = Some(format!("Failed to fetch PRs: {}", e));
+            }
+        }
+
+        self.dirty = true;
+    }
+
+    /// Close PR picker and return to normal mode.
+    pub fn close_pr_picker(&mut self) {
+        self.mode = Mode::Normal;
+        self.pr_list.clear();
+        self.pr_picker_selected = 0;
+        self.pr_picker_scroll = 0;
+        self.dirty = true;
+    }
+
+    /// Select next PR in picker.
+    pub fn pr_picker_next(&mut self) {
+        if !self.pr_list.is_empty() {
+            self.pr_picker_selected = (self.pr_picker_selected + 1).min(self.pr_list.len() - 1);
+            self.dirty = true;
+        }
+    }
+
+    /// Select previous PR in picker.
+    pub fn pr_picker_prev(&mut self) {
+        self.pr_picker_selected = self.pr_picker_selected.saturating_sub(1);
+        self.dirty = true;
+    }
+
+    /// Cycle to next PR filter.
+    pub fn pr_picker_next_filter(&mut self) {
+        self.pr_filter = match self.pr_filter {
+            crate::core::PRFilter::All => crate::core::PRFilter::Mine,
+            crate::core::PRFilter::Mine => crate::core::PRFilter::ReviewRequested,
+            crate::core::PRFilter::ReviewRequested => crate::core::PRFilter::All,
+        };
+        self.pr_picker_selected = 0;
+        self.fetch_pr_list();
+    }
+
+    /// Cycle to previous PR filter.
+    pub fn pr_picker_prev_filter(&mut self) {
+        self.pr_filter = match self.pr_filter {
+            crate::core::PRFilter::All => crate::core::PRFilter::ReviewRequested,
+            crate::core::PRFilter::Mine => crate::core::PRFilter::All,
+            crate::core::PRFilter::ReviewRequested => crate::core::PRFilter::Mine,
+        };
+        self.pr_picker_selected = 0;
+        self.fetch_pr_list();
+    }
+
+    /// Select the highlighted PR and load its diff.
+    pub fn pr_picker_select(&mut self) {
+        if self.pr_list.is_empty() {
+            return;
+        }
+
+        let pr = self.pr_list[self.pr_picker_selected].clone();
+        self.load_pr(pr);
+    }
+
+    /// Load a specific PR's diff.
+    pub fn load_pr(&mut self, pr: crate::core::PullRequest) {
+        self.pr_loading = true;
+        self.error_msg = None;
+        self.mode = Mode::Normal;
+        self.dirty = true;
+
+        // Fetch PR diff
+        match crate::core::get_pr_diff(self.repo.path(), pr.number) {
+            Ok(raw_diff) => {
+                // Parse unified diff into file list
+                let pr_files = crate::core::parse_unified_diff(&raw_diff);
+
+                // Convert to ChangedFile for compatibility with existing UI
+                self.files = pr_files
+                    .iter()
+                    .map(|pf| ChangedFile {
+                        path: pf.path.clone(),
+                        kind: pf.kind,
+                        old_path: pf.old_path.clone(),
+                    })
+                    .collect();
+
+                self.pr_files = pr_files;
+                self.pr_mode = true;
+                self.current_pr = Some(pr.clone());
+
+                // Update diff source
+                self.source = DiffSource::PullRequest {
+                    number: pr.number,
+                    head: pr.head_ref_name.clone(),
+                    base: pr.base_ref_name.clone(),
+                };
+
+                // Reset selection
+                self.selected_idx = 0;
+                self.sidebar_scroll = 0;
+                self.pr_loading = false;
+
+                // Load first file's diff
+                if !self.files.is_empty() {
+                    self.request_current_pr_diff();
+                } else {
+                    self.diff = None;
+                    self.old_buffer = None;
+                    self.new_buffer = None;
+                    self.status_msg = Some("PR has no changed files".to_string());
+                }
+
+                self.dirty = true;
+            }
+            Err(e) => {
+                self.pr_loading = false;
+                self.error_msg = Some(format!("Failed to load PR diff: {}", e));
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// Request diff for currently selected file in PR mode.
+    fn request_current_pr_diff(&mut self) {
+        if !self.pr_mode || self.pr_files.is_empty() {
+            return;
+        }
+
+        let Some(pr_file) = self.pr_files.get(self.selected_idx) else {
+            return;
+        };
+
+        // Detect language for highlighting
+        self.current_lang = pr_file
+            .path
+            .extension()
+            .map(crate::highlight::LanguageId::from_extension)
+            .unwrap_or(crate::highlight::LanguageId::Plain);
+
+        // For PR mode, we use the patch directly
+        // Create synthetic old/new buffers from the patch
+        let (old_content, new_content) = extract_content_from_patch(&pr_file.patch);
+
+        let old_buffer = TextBuffer::new(old_content.as_bytes());
+        let new_buffer = TextBuffer::new(new_content.as_bytes());
+
+        let is_binary = old_buffer.is_binary() || new_buffer.is_binary();
+        let diff = if is_binary {
+            None
+        } else {
+            Some(DiffResult::compute(&old_buffer, &new_buffer))
+        };
+
+        self.is_binary = is_binary;
+        self.old_buffer = Some(old_buffer);
+        self.new_buffer = Some(new_buffer);
+        self.diff = diff;
+
+        // Jump to first hunk
+        if let Some(diff) = self.diff.as_ref() {
+            if let Some(first) = diff.hunks().first() {
+                self.scroll_y = first.start_row;
+            }
+        }
+
+        self.scroll_x = 0;
+        self.error_msg = None;
+        self.loading = false;
+        self.dirty = true;
+    }
+
+    /// Exit PR mode and return to working tree.
+    pub fn exit_pr_mode(&mut self) {
+        if !self.pr_mode {
+            return;
+        }
+
+        self.pr_mode = false;
+        self.current_pr = None;
+        self.pr_files.clear();
+        self.source = DiffSource::WorkingTree;
+
+        // Reload working tree files
+        match list_changed_files(&self.repo) {
+            Ok(files) => {
+                self.files = files;
+                self.selected_idx = 0;
+                if !self.files.is_empty() {
+                    self.request_current_diff();
+                }
+            }
+            Err(e) => {
+                self.error_msg = Some(format!("Failed to reload: {}", e));
+            }
+        }
+
+        self.dirty = true;
+    }
+
+    /// Refresh current PR.
+    pub fn refresh_pr(&mut self) {
+        if let Some(pr) = self.current_pr.clone() {
+            self.load_pr(pr);
+        }
+    }
+
+    // ========================================================================
+    // PR Actions
+    // ========================================================================
+
+    /// Start approve action.
+    pub fn start_pr_approve(&mut self) {
+        if !self.pr_mode || self.current_pr.is_none() {
+            self.error_msg = Some("Not in PR mode".to_string());
+            self.dirty = true;
+            return;
+        }
+
+        self.pr_action_type = Some(PRActionType::Approve);
+        self.pr_action_text.clear();
+        self.mode = Mode::PRAction;
+        self.dirty = true;
+    }
+
+    /// Start comment action.
+    pub fn start_pr_comment(&mut self) {
+        if !self.pr_mode || self.current_pr.is_none() {
+            self.error_msg = Some("Not in PR mode".to_string());
+            self.dirty = true;
+            return;
+        }
+
+        self.pr_action_type = Some(PRActionType::Comment);
+        self.pr_action_text.clear();
+        self.mode = Mode::PRAction;
+        self.dirty = true;
+    }
+
+    /// Start request-changes action.
+    pub fn start_pr_request_changes(&mut self) {
+        if !self.pr_mode || self.current_pr.is_none() {
+            self.error_msg = Some("Not in PR mode".to_string());
+            self.dirty = true;
+            return;
+        }
+
+        self.pr_action_type = Some(PRActionType::RequestChanges);
+        self.pr_action_text.clear();
+        self.mode = Mode::PRAction;
+        self.dirty = true;
+    }
+
+    /// Cancel current PR action.
+    pub fn cancel_pr_action(&mut self) {
+        self.mode = Mode::Normal;
+        self.pr_action_type = None;
+        self.pr_action_text.clear();
+        self.dirty = true;
+    }
+
+    /// Submit the current PR action.
+    pub fn submit_pr_action(&mut self) {
+        let Some(pr) = &self.current_pr else {
+            self.error_msg = Some("No PR selected".to_string());
+            self.cancel_pr_action();
+            return;
+        };
+
+        let pr_number = pr.number;
+        let repo_path = self.repo.path().to_path_buf();
+
+        let result = match self.pr_action_type {
+            Some(PRActionType::Approve) => {
+                let body = if self.pr_action_text.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.pr_action_text.as_str())
+                };
+                crate::core::approve_pr(&repo_path, pr_number, body)
+            }
+            Some(PRActionType::Comment) => {
+                if self.pr_action_text.trim().is_empty() {
+                    self.error_msg = Some("Comment cannot be empty".to_string());
+                    self.dirty = true;
+                    return;
+                }
+                crate::core::comment_pr(&repo_path, pr_number, &self.pr_action_text)
+            }
+            Some(PRActionType::RequestChanges) => {
+                if self.pr_action_text.trim().is_empty() {
+                    self.error_msg = Some("Message cannot be empty".to_string());
+                    self.dirty = true;
+                    return;
+                }
+                crate::core::request_changes_pr(&repo_path, pr_number, &self.pr_action_text)
+            }
+            None => {
+                self.cancel_pr_action();
+                return;
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                let action_name = match self.pr_action_type {
+                    Some(PRActionType::Approve) => "approved",
+                    Some(PRActionType::Comment) => "commented on",
+                    Some(PRActionType::RequestChanges) => "requested changes on",
+                    None => "reviewed",
+                };
+                self.status_msg = Some(format!("PR #{} {}", pr_number, action_name));
+                self.error_msg = None;
+            }
+            Err(e) => {
+                self.error_msg = Some(format!("Failed: {}", e));
+            }
+        }
+
+        self.cancel_pr_action();
+    }
+}
+
+/// Extract old and new content from a unified diff patch.
+///
+/// This is a simplified extraction that reconstructs file content from
+/// the patch hunks. Not perfect but good enough for diff display.
+fn extract_content_from_patch(patch: &str) -> (String, String) {
+    let mut old_lines: Vec<&str> = Vec::new();
+    let mut new_lines: Vec<&str> = Vec::new();
+    let mut in_hunk = false;
+
+    for line in patch.lines() {
+        if line.starts_with("@@") {
+            in_hunk = true;
+            continue;
+        }
+
+        if !in_hunk {
+            continue;
+        }
+
+        if line.starts_with('-') && !line.starts_with("---") {
+            // Deleted line - only in old
+            old_lines.push(&line[1..]);
+        } else if line.starts_with('+') && !line.starts_with("+++") {
+            // Added line - only in new
+            new_lines.push(&line[1..]);
+        } else if line.starts_with(' ') || line.is_empty() {
+            // Context line - in both
+            let content = line.strip_prefix(' ').unwrap_or(line);
+            old_lines.push(content);
+            new_lines.push(content);
+        }
+    }
+
+    (old_lines.join("\n"), new_lines.join("\n"))
 }

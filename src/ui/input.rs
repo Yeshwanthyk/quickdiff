@@ -23,6 +23,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         Mode::FilterFiles => return handle_filter_key(app, key),
         Mode::SelectTheme => return handle_theme_selector_key(app, key),
         Mode::Help => return handle_help_key(app, key),
+        Mode::PRPicker => return handle_pr_picker_key(app, key),
+        Mode::PRAction => return handle_pr_action_key(app, key),
         Mode::Normal => {}
     }
 
@@ -70,6 +72,14 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('o') => {
             app.open_selected_in_editor();
+            return true;
+        }
+        KeyCode::Char('P') => {
+            if !app.pr_mode {
+                app.open_pr_picker();
+            } else {
+                app.exit_pr_mode();
+            }
             return true;
         }
         _ => {}
@@ -383,5 +393,65 @@ fn handle_click(app: &mut App, x: u16, y: u16) {
     } else {
         // Click in diff region -> focus diff
         app.set_focus(Focus::Diff);
+    }
+}
+
+/// Handle keys in PR picker mode.
+fn handle_pr_picker_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.close_pr_picker();
+            true
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.pr_picker_next();
+            true
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.pr_picker_prev();
+            true
+        }
+        KeyCode::Enter => {
+            app.pr_picker_select();
+            true
+        }
+        KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
+            app.pr_picker_next_filter();
+            true
+        }
+        KeyCode::BackTab | KeyCode::Char('h') | KeyCode::Left => {
+            app.pr_picker_prev_filter();
+            true
+        }
+        KeyCode::Char('r') => {
+            app.fetch_pr_list();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Handle keys in PR action mode.
+fn handle_pr_action_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.cancel_pr_action();
+            true
+        }
+        KeyCode::Enter => {
+            app.submit_pr_action();
+            true
+        }
+        KeyCode::Char(c) => {
+            app.pr_action_text.push(c);
+            app.dirty = true;
+            true
+        }
+        KeyCode::Backspace => {
+            app.pr_action_text.pop();
+            app.dirty = true;
+            true
+        }
+        _ => false,
     }
 }
