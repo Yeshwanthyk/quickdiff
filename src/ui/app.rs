@@ -444,6 +444,12 @@ impl App {
     ///
     /// Work is performed on a background thread. Call `poll_worker()` to apply results.
     pub fn request_current_diff(&mut self) {
+        // PR mode uses patch-based diff extraction instead of git show
+        if self.pr_mode {
+            self.request_current_pr_diff();
+            return;
+        }
+
         self.error_msg = None;
         self.status_msg = None;
         self.is_binary = false;
