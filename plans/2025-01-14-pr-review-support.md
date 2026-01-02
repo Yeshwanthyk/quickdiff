@@ -10,7 +10,7 @@
 
 ## Progress Tracking
 - [x] Phase 1: GitHub CLI Wrapper Module
-- [ ] Phase 2: DiffSource Extension & PR Diff Parser
+- [x] Phase 2: DiffSource Extension & PR Diff Parser
 - [ ] Phase 3: PR Picker UI
 - [ ] Phase 4: PR Diff Viewing Integration
 - [ ] Phase 5: PR Review Actions & Polish
@@ -400,10 +400,10 @@ Extend `DiffSource` with `PullRequest` variant and add unified diff parser.
 - [ ] Phase 1 automated checks pass
 
 ### Change Checklist
-- [ ] Add `PullRequest` variant to `DiffSource`
-- [ ] Create `src/core/pr_diff.rs` with unified diff parser
-- [ ] Add `PRChangedFile` type for parsed PR files
-- [ ] Export new types from core module
+- [x] Add `PullRequest` variant to `DiffSource`
+- [x] Create `src/core/pr_diff.rs` with unified diff parser
+- [x] Add `PRChangedFile` type for parsed PR files
+- [x] Export new types from core module
 
 ### Changes
 

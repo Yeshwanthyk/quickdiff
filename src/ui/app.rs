@@ -187,6 +187,10 @@ fn comment_context_for_source(source: &DiffSource) -> CommentContext {
             from: from.clone(),
             to: to.clone(),
         },
+        DiffSource::PullRequest { number, .. } => CommentContext::Commit {
+            // Use PR number as pseudo-commit context
+            commit: format!("pr-{}", number),
+        },
     }
 }
 
@@ -236,6 +240,10 @@ impl App {
             DiffSource::Base(base) => {
                 let result = list_changed_files_from_base_with_merge_base(&repo, base)?;
                 (result.files, Some(result.merge_base))
+            }
+            DiffSource::PullRequest { .. } => {
+                // PR files are loaded separately via load_pr()
+                (Vec::new(), None)
             }
         };
 
@@ -831,6 +839,12 @@ impl App {
                 }
                 self.dirty = true;
             }
+            DiffSource::PullRequest { .. } => {
+                // PR reload handled by refresh_pr() in PR mode
+                self.request_current_diff();
+                self.status_msg = Some("Reloaded PR diff".to_string());
+                self.dirty = true;
+            }
         }
     }
 
@@ -1381,8 +1395,10 @@ impl App {
                         r.files
                     })
             }
-            // Commit/Range modes don't need refresh (historical data)
-            DiffSource::Commit(_) | DiffSource::Range { .. } => return,
+            // Commit/Range/PR modes don't use this refresh (historical/remote data)
+            DiffSource::Commit(_) | DiffSource::Range { .. } | DiffSource::PullRequest { .. } => {
+                return
+            }
         };
 
         let Some(mut files) = new_files else {

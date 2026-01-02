@@ -58,6 +58,15 @@ pub enum DiffSource {
     },
     /// Compare against a base ref (e.g., origin/main).
     Base(String),
+    /// GitHub Pull Request.
+    PullRequest {
+        /// PR number.
+        number: u32,
+        /// Head branch name.
+        head: String,
+        /// Base branch name.
+        base: String,
+    },
 }
 
 impl Default for DiffSource {
@@ -506,6 +515,11 @@ pub fn load_diff_contents(
                 }
             }
         }
+        DiffSource::PullRequest { .. } => {
+            // PR mode uses patch extraction, not git show.
+            // This should not be called for PR sources.
+            unreachable!("load_diff_contents should not be called for PR sources")
+        }
     }
 }
 
@@ -707,6 +721,9 @@ pub fn diff_source_display(source: &DiffSource, root: &RepoRoot) -> String {
             format!("{}..{}", &from[..7.min(from.len())], &to[..7.min(to.len())])
         }
         DiffSource::Base(base) => format!("vs {}", base),
+        DiffSource::PullRequest { number, head, base } => {
+            format!("PR #{} ({} → {})", number, head, base)
+        }
     }
 }
 
