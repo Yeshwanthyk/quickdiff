@@ -687,6 +687,24 @@ impl App {
         }
     }
 
+    /// Reload the current diff or refresh file list manually.
+    pub fn manual_reload(&mut self) {
+        match self.source {
+            DiffSource::WorkingTree | DiffSource::Base(_) => {
+                self.refresh_file_list();
+            }
+            DiffSource::Commit(_) | DiffSource::Range { .. } => {
+                if self.files.is_empty() {
+                    self.status_msg = Some("No files to reload".to_string());
+                } else {
+                    self.request_current_diff();
+                    self.status_msg = Some("Reloaded current diff".to_string());
+                }
+                self.dirty = true;
+            }
+        }
+    }
+
     /// Open the in-app help overlay.
     pub fn open_help(&mut self) {
         self.mode = Mode::Help;

@@ -60,6 +60,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.open_help();
             return true;
         }
+        KeyCode::Char('r') => {
+            app.manual_reload();
+            return true;
+        }
         _ => {}
     }
 
