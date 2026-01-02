@@ -1284,6 +1284,9 @@ fn render_help_overlay(frame: &mut Frame, app: &App) {
         ("r", "Manual reload of file list/diff"),
         ("y", "Copy current path to clipboard"),
         ("o", "Open file in $EDITOR"),
+        ("P", "Open PR picker / exit PR mode"),
+        ("A", "Approve PR (in PR mode)"),
+        ("R", "Request changes (in PR mode)"),
         ("?", "Close this help overlay"),
         ("q or Ctrl+C", "Quit quickdiff"),
     ];

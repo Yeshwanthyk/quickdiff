@@ -13,7 +13,7 @@
 - [x] Phase 2: DiffSource Extension & PR Diff Parser
 - [x] Phase 3: PR Picker UI
 - [x] Phase 4: PR Diff Viewing Integration
-- [ ] Phase 5: PR Review Actions & Polish
+- [x] Phase 5: PR Review Actions & Polish
 
 ## Overview
 
@@ -1691,11 +1691,11 @@ Complete PR action submission, add focus-based auto-refresh, and CLI flags.
 - [ ] Phase 4 automated checks pass
 
 ### Change Checklist
-- [ ] Add PR action methods to App (start/cancel/submit)
-- [ ] Add PR action keybinds in diff view
-- [ ] Add focus-based auto-refresh for PR mode
-- [ ] Add `--pr` CLI flags
-- [ ] Update help text
+- [x] Add PR action methods to App (start/cancel/submit) (done in Phase 3)
+- [x] Add PR action keybinds in diff view (A/R for approve/request-changes)
+- [ ] Add focus-based auto-refresh for PR mode (deferred - requires terminal focus events)
+- [x] Add `--pr` CLI flags
+- [x] Update help text
 
 ### Changes
 

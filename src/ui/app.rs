@@ -37,14 +37,22 @@ pub enum Focus {
 /// UI mode (normal vs input modes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
+    /// Normal navigation mode.
     #[default]
     Normal,
+    /// Adding a comment.
     AddComment,
+    /// Viewing comments overlay.
     ViewComments,
+    /// Filtering files in sidebar.
     FilterFiles,
+    /// Selecting a theme.
     SelectTheme,
+    /// Viewing help overlay.
     Help,
+    /// Browsing PR list.
     PRPicker,
+    /// Composing PR review action.
     PRAction,
 }
 

@@ -42,6 +42,10 @@ struct Cli {
     #[arg(short = 't', long = "theme", value_name = "THEME")]
     theme: Option<String>,
 
+    /// Browse and review GitHub pull requests (optionally specify PR number)
+    #[arg(long = "pr", value_name = "NUMBER")]
+    pr: Option<Option<u32>>,
+
     /// Comments subcommand
     #[arg(trailing_var_arg = true, hide = true)]
     rest: Vec<String>,
@@ -83,8 +87,15 @@ fn main() -> ExitCode {
     // Determine diff source
     let source = parse_diff_source(&cli);
 
+    // Handle --pr flag
+    let pr_number = match cli.pr {
+        Some(Some(n)) => Some(n), // --pr 123
+        Some(None) => Some(0),    // --pr (picker mode, 0 = open picker)
+        None => None,             // no flag
+    };
+
     // Run TUI
-    match run_tui(source, cli.file, cli.theme) {
+    match run_tui(source, cli.file, cli.theme, pr_number) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -164,7 +175,12 @@ fn run_cli_comments(args: &[String]) -> ExitCode {
 }
 
 /// Run the TUI application.
-fn run_tui(source: DiffSource, file_filter: Option<String>, theme: Option<String>) -> Result<()> {
+fn run_tui(
+    source: DiffSource,
+    file_filter: Option<String>,
+    theme: Option<String>,
+    pr_number: Option<u32>,
+) -> Result<()> {
     // Set panic hook to ensure terminal cleanup
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
@@ -192,10 +208,38 @@ fn run_tui(source: DiffSource, file_filter: Option<String>, theme: Option<String
     };
 
     // Create app with diff source and file filter
-    let mut app = App::new(repo, source, file_filter, theme.as_deref())?;
+    let mut app = App::new(repo.clone(), source, file_filter, theme.as_deref())?;
 
-    // Check for empty changeset
-    if app.files.is_empty() {
+    // Handle PR mode initialization
+    if let Some(n) = pr_number {
+        if n == 0 {
+            // Open PR picker
+            app.open_pr_picker();
+        } else {
+            // Load specific PR
+            if !quickdiff::core::is_gh_available() {
+                eprintln!("Error: GitHub CLI not available. Run 'gh auth login'");
+                std::process::exit(1);
+            }
+            match quickdiff::core::list_prs(repo.path(), quickdiff::core::PRFilter::All) {
+                Ok(prs) => {
+                    if let Some(pr) = prs.into_iter().find(|p| p.number == n) {
+                        app.load_pr(pr);
+                    } else {
+                        eprintln!("Error: PR #{} not found", n);
+                        std::process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
+    // Check for empty changeset (skip in PR mode - files come from PR)
+    if app.files.is_empty() && !app.pr_mode && app.mode != quickdiff::ui::Mode::PRPicker {
         println!("No changes detected");
         return Ok(());
     }
