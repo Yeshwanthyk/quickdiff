@@ -1258,6 +1258,9 @@ fn render_help_overlay(frame: &mut Frame, app: &App) {
         ("c / C", "Add or view comments"),
         ("[", "Toggle old pane fullscreen"),
         ("]", "Toggle new pane fullscreen"),
+        ("r", "Manual reload of file list/diff"),
+        ("y", "Copy current path to clipboard"),
+        ("o", "Open file in $EDITOR"),
         ("?", "Close this help overlay"),
         ("q or Ctrl+C", "Quit quickdiff"),
     ];
