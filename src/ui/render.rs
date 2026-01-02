@@ -17,7 +17,7 @@ use crate::core::{ChangeKind, CommentStatus, FileChangeKind, InlineSpan, ViewedS
 use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId};
 use crate::theme::Theme;
 
-use super::app::{App, DiffPaneMode, Focus, Mode};
+use super::app::{App, DiffPaneMode, Focus, Mode, PRActionType};
 
 // ============================================================================
 // Constants
@@ -85,6 +85,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::Help {
         render_help_overlay(frame, app);
     }
+
+    if app.mode == Mode::PRPicker {
+        render_pr_picker_overlay(frame, app);
+    }
+
+    if app.mode == Mode::PRAction {
+        render_pr_action_overlay(frame, app);
+    }
 }
 
 // ============================================================================
@@ -108,6 +116,21 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         "  ",
         Style::default().bg(app.theme.bg_elevated),
     )];
+
+    // PR badge if in PR mode
+    if let Some(ref pr) = app.current_pr {
+        spans.push(Span::styled(
+            format!(" PR #{} ", pr.number),
+            Style::default()
+                .fg(app.theme.bg_dark)
+                .bg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            " ",
+            Style::default().bg(app.theme.bg_elevated),
+        ));
+    }
 
     // Change kind badge
     if let Some((kind, color)) = kind_indicator {
@@ -1532,15 +1555,14 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    // Key hints
-    let hints: &[(&str, &str)] = match app.focus {
+    // Key hints - build dynamically based on mode
+    let base_hints: &[(&str, &str)] = match app.focus {
         Focus::Sidebar => &[
             ("j/k", "navigate"),
             ("↵", "open"),
             ("/", "filter"),
             ("␣", "view+next"),
             ("⇥", "switch"),
-            ("q", "quit"),
         ],
         Focus::Diff => &[
             ("j/k", "scroll"),
@@ -1549,12 +1571,30 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("C", "view"),
             ("␣", "view+next"),
             ("⇥", "switch"),
-            ("q", "quit"),
         ],
     };
 
+    // PR mode hints
+    let pr_hints: &[(&str, &str)] = if app.pr_mode {
+        &[
+            ("A", "approve"),
+            ("C", "comment"),
+            ("R", "req-chg"),
+            ("P", "exit PR"),
+        ]
+    } else {
+        &[("P", "PRs")]
+    };
+
     let mut spans = vec![Span::styled(" ", Style::default().bg(app.theme.bg_surface))];
-    for (i, (key, desc)) in hints.iter().enumerate() {
+
+    // Combine base hints + pr hints + quit
+    let all_hints = base_hints
+        .iter()
+        .chain(pr_hints.iter())
+        .chain(std::iter::once(&("q", "quit")));
+
+    for (i, (key, desc)) in all_hints.enumerate() {
         if i > 0 {
             spans.push(Span::styled(
                 "  ",
@@ -1578,6 +1618,217 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     let line = Line::from(spans);
     let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_surface));
     frame.render_widget(para, area);
+}
+
+// ============================================================================
+// PR Picker Overlay
+// ============================================================================
+
+fn render_pr_picker_overlay(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    // Center the picker
+    let width = (area.width * 3 / 4).min(80);
+    let height = (area.height * 3 / 4).min(30);
+    let x = (area.width - width) / 2;
+    let y = (area.height - height) / 2;
+    let picker_area = Rect::new(x, y, width, height);
+
+    // Background
+    let block = Block::default()
+        .title(" Pull Requests ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.accent))
+        .style(Style::default().bg(app.theme.bg_dark));
+    frame.render_widget(block, picker_area);
+
+    let inner = Rect::new(
+        picker_area.x + 1,
+        picker_area.y + 1,
+        picker_area.width.saturating_sub(2),
+        picker_area.height.saturating_sub(2),
+    );
+
+    // Filter tabs
+    let filter_line = Line::from(vec![
+        Span::raw(" "),
+        styled_filter_tab(
+            "All",
+            app.pr_filter == crate::core::PRFilter::All,
+            &app.theme,
+        ),
+        Span::raw("  "),
+        styled_filter_tab(
+            "Mine",
+            app.pr_filter == crate::core::PRFilter::Mine,
+            &app.theme,
+        ),
+        Span::raw("  "),
+        styled_filter_tab(
+            "Review Requested",
+            app.pr_filter == crate::core::PRFilter::ReviewRequested,
+            &app.theme,
+        ),
+        Span::raw(" "),
+    ]);
+    let filter_para = Paragraph::new(filter_line);
+    frame.render_widget(filter_para, Rect::new(inner.x, inner.y, inner.width, 1));
+
+    // Loading or list
+    let list_area = Rect::new(
+        inner.x,
+        inner.y + 2,
+        inner.width,
+        inner.height.saturating_sub(4),
+    );
+
+    if app.pr_loading {
+        let loading = Paragraph::new("Loading...").style(Style::default().fg(app.theme.text_muted));
+        frame.render_widget(loading, list_area);
+    } else if app.pr_list.is_empty() {
+        let empty = Paragraph::new("No PRs found").style(Style::default().fg(app.theme.text_muted));
+        frame.render_widget(empty, list_area);
+    } else {
+        // Render PR list
+        let visible_height = list_area.height as usize;
+        let start = app.pr_picker_scroll;
+        let end = (start + visible_height).min(app.pr_list.len());
+
+        for (i, pr) in app.pr_list[start..end].iter().enumerate() {
+            let y = list_area.y + i as u16;
+            let is_selected = start + i == app.pr_picker_selected;
+
+            let style = if is_selected {
+                Style::default().bg(app.theme.accent).fg(app.theme.bg_dark)
+            } else {
+                Style::default().fg(app.theme.text_normal)
+            };
+
+            // Format: #123 Title (head → base) +10/-5
+            let pr_line = format!(
+                " #{:<4} {} ({} → {}) +{}/-{}",
+                pr.number,
+                truncate_str(&pr.title, 30),
+                truncate_str(&pr.head_ref_name, 15),
+                truncate_str(&pr.base_ref_name, 15),
+                pr.additions,
+                pr.deletions,
+            );
+
+            let line = Paragraph::new(pr_line).style(style);
+            frame.render_widget(line, Rect::new(list_area.x, y, list_area.width, 1));
+        }
+    }
+
+    // Help line at bottom
+    let help_line = Line::from(vec![
+        Span::styled("j/k", Style::default().fg(app.theme.accent)),
+        Span::raw(" navigate  "),
+        Span::styled("Tab", Style::default().fg(app.theme.accent)),
+        Span::raw(" filter  "),
+        Span::styled("Enter", Style::default().fg(app.theme.accent)),
+        Span::raw(" select  "),
+        Span::styled("r", Style::default().fg(app.theme.accent)),
+        Span::raw(" refresh  "),
+        Span::styled("Esc", Style::default().fg(app.theme.accent)),
+        Span::raw(" close"),
+    ]);
+    let help_para = Paragraph::new(help_line).style(Style::default().fg(app.theme.text_muted));
+    frame.render_widget(
+        help_para,
+        Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
+    );
+}
+
+fn styled_filter_tab<'a>(label: &'a str, active: bool, theme: &Theme) -> Span<'a> {
+    if active {
+        Span::styled(
+            format!("[{}]", label),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            format!(" {} ", label),
+            Style::default().fg(theme.text_muted),
+        )
+    }
+}
+
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max_len - 1])
+    }
+}
+
+// ============================================================================
+// PR Action Overlay
+// ============================================================================
+
+fn render_pr_action_overlay(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let width = 60.min(area.width - 4);
+    let height = 10;
+    let x = (area.width - width) / 2;
+    let y = (area.height - height) / 2;
+    let action_area = Rect::new(x, y, width, height);
+
+    let title = match app.pr_action_type {
+        Some(PRActionType::Approve) => " Approve PR ",
+        Some(PRActionType::Comment) => " Comment on PR ",
+        Some(PRActionType::RequestChanges) => " Request Changes ",
+        None => " PR Action ",
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.accent))
+        .style(Style::default().bg(app.theme.bg_dark));
+    frame.render_widget(block, action_area);
+
+    let inner = Rect::new(
+        action_area.x + 2,
+        action_area.y + 2,
+        action_area.width.saturating_sub(4),
+        action_area.height.saturating_sub(4),
+    );
+
+    // Show text input for comment/request-changes
+    let show_input = matches!(
+        app.pr_action_type,
+        Some(PRActionType::Comment) | Some(PRActionType::RequestChanges)
+    );
+
+    if show_input {
+        let label =
+            Paragraph::new("Message (required):").style(Style::default().fg(app.theme.text_muted));
+        frame.render_widget(label, Rect::new(inner.x, inner.y, inner.width, 1));
+
+        let input_text = format!("{}_", &app.pr_action_text);
+        let input = Paragraph::new(input_text).style(Style::default().fg(app.theme.text_normal));
+        frame.render_widget(input, Rect::new(inner.x, inner.y + 1, inner.width, 3));
+    } else {
+        let confirm = Paragraph::new("Press Enter to approve, Esc to cancel")
+            .style(Style::default().fg(app.theme.text_muted));
+        frame.render_widget(confirm, Rect::new(inner.x, inner.y + 1, inner.width, 1));
+    }
+
+    // Help line
+    let help = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(app.theme.accent)),
+        Span::raw(" submit  "),
+        Span::styled("Esc", Style::default().fg(app.theme.accent)),
+        Span::raw(" cancel"),
+    ]);
+    let help_para = Paragraph::new(help).style(Style::default().fg(app.theme.text_muted));
+    frame.render_widget(
+        help_para,
+        Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
+    );
 }
 
 #[cfg(test)]

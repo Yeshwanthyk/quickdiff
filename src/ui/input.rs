@@ -122,6 +122,15 @@ fn handle_sidebar_key(app: &mut App, key: KeyEvent) -> bool {
 /// Handle keys when diff view is focused.
 fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
+        // PR actions (only in PR mode)
+        KeyCode::Char('A') if app.pr_mode => {
+            app.start_pr_approve();
+            true
+        }
+        KeyCode::Char('R') if app.pr_mode => {
+            app.start_pr_request_changes();
+            true
+        }
         KeyCode::Char('j') | KeyCode::Down => {
             app.scroll_diff(1, 0);
             true

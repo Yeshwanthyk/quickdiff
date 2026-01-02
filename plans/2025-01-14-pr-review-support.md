@@ -12,7 +12,7 @@
 - [x] Phase 1: GitHub CLI Wrapper Module
 - [x] Phase 2: DiffSource Extension & PR Diff Parser
 - [x] Phase 3: PR Picker UI
-- [ ] Phase 4: PR Diff Viewing Integration
+- [x] Phase 4: PR Diff Viewing Integration
 - [ ] Phase 5: PR Review Actions & Polish
 
 ## Overview
@@ -1349,10 +1349,10 @@ Add rendering for PR picker overlay and integrate PR diff viewing with existing 
 - [ ] Phase 3 automated checks pass
 
 ### Change Checklist
-- [ ] Add PR picker overlay rendering
-- [ ] Update top bar to show PR info
-- [ ] Update bottom bar for PR mode hints
-- [ ] Handle PR file selection in sidebar
+- [x] Add PR picker overlay rendering
+- [x] Update top bar to show PR info
+- [x] Update bottom bar for PR mode hints
+- [x] Handle PR file selection in sidebar (via existing sidebar + request_current_pr_diff)
 
 ### Changes
 
