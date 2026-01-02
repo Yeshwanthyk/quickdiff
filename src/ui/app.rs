@@ -12,6 +12,8 @@ use crate::core::{
 use crate::highlight::{query_scopes, HighlighterCache, LanguageId, ScopeInfo};
 use crate::theme::Theme;
 
+use arboard::Clipboard;
+
 use super::worker::{spawn_diff_worker, DiffLoadRequest, DiffLoadResponse, DiffWorker};
 
 /// Focus state for the UI.
@@ -685,6 +687,30 @@ impl App {
             self.diff_pane_mode = mode;
             self.dirty = true;
         }
+    }
+
+    /// Copy the currently selected file path to the clipboard.
+    pub fn copy_selected_path(&mut self) {
+        let Some(file) = self.selected_file() else {
+            self.error_msg = Some("No file selected to copy".to_string());
+            self.dirty = true;
+            return;
+        };
+
+        match Clipboard::new() {
+            Ok(mut clipboard) => {
+                if let Err(e) = clipboard.set_text(file.path.as_str().to_string()) {
+                    self.error_msg = Some(format!("Clipboard error: {}", e));
+                } else {
+                    self.status_msg = Some(format!("Copied {} to clipboard", file.path));
+                }
+            }
+            Err(e) => {
+                self.error_msg = Some(format!("Clipboard unavailable: {}", e));
+            }
+        }
+
+        self.dirty = true;
     }
 
     /// Reload the current diff or refresh file list manually.

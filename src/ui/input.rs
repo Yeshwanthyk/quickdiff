@@ -64,6 +64,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.manual_reload();
             return true;
         }
+        KeyCode::Char('y') => {
+            app.copy_selected_path();
+            return true;
+        }
         _ => {}
     }
 
