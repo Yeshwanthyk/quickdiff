@@ -693,6 +693,23 @@ fn parse_diff_name_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
     Ok(files)
 }
 
+/// Truncate a string to at most `max_chars` Unicode characters.
+/// If truncated, appends "..." so total display width is roughly `max_chars + 3`.
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
+    }
+}
+
+/// Take at most `n` characters from a string (no ellipsis).
+fn take_chars(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
 /// Get a display name for a DiffSource.
 pub fn diff_source_display(source: &DiffSource, root: &RepoRoot) -> String {
     match source {
@@ -708,17 +725,14 @@ pub fn diff_source_display(source: &DiffSource, root: &RepoRoot) -> String {
                 if out.status.success() {
                     if let Ok(msg) = std::str::from_utf8(&out.stdout) {
                         let msg = msg.trim();
-                        if msg.len() > 50 {
-                            return format!("{}...", &msg[..47]);
-                        }
-                        return msg.to_string();
+                        return truncate_chars(msg, 50);
                     }
                 }
             }
-            format!("Commit {}", &c[..7.min(c.len())])
+            format!("Commit {}", take_chars(c, 7))
         }
         DiffSource::Range { from, to } => {
-            format!("{}..{}", &from[..7.min(from.len())], &to[..7.min(to.len())])
+            format!("{}..{}", take_chars(from, 7), take_chars(to, 7))
         }
         DiffSource::Base(base) => format!("vs {}", base),
         DiffSource::PullRequest { number, head, base } => {
@@ -811,5 +825,32 @@ mod tests {
             files[0].old_path.as_ref().map(|p| p.as_str()),
             Some("original.rs")
         );
+    }
+
+    #[test]
+    fn truncate_chars_ascii() {
+        assert_eq!(truncate_chars("short", 10), "short");
+        assert_eq!(truncate_chars("exactly ten", 11), "exactly ten");
+        assert_eq!(truncate_chars("this is way too long", 10), "this is wa...");
+    }
+
+    #[test]
+    fn truncate_chars_unicode() {
+        // Japanese: each char is 3 bytes but 1 char
+        let jp = "日本語テスト"; // 6 chars, 18 bytes
+        assert_eq!(truncate_chars(jp, 10), jp); // fits
+        assert_eq!(truncate_chars(jp, 4), "日本語テ..."); // truncated at char boundary
+
+        // Emoji: multi-byte
+        let emoji = "🎉🎊🎁🎂🎈"; // 5 chars
+        assert_eq!(truncate_chars(emoji, 3), "🎉🎊🎁...");
+    }
+
+    #[test]
+    fn take_chars_unicode() {
+        assert_eq!(take_chars("abc", 2), "ab");
+        assert_eq!(take_chars("日本語", 2), "日本");
+        assert_eq!(take_chars("🎉🎊🎁", 2), "🎉🎊");
+        assert_eq!(take_chars("short", 100), "short"); // no panic on over-take
     }
 }
