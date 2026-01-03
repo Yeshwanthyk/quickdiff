@@ -1,9 +1,13 @@
 //! GitHub CLI (`gh`) wrapper for PR operations.
 
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
 
 use serde::Deserialize;
 use thiserror::Error;
+
+/// Maximum diff size to load (50 MiB). Matches repo::MAX_FILE_SIZE.
+pub const MAX_DIFF_SIZE: usize = 50 * 1024 * 1024;
 
 /// Errors from GitHub CLI operations.
 #[derive(Debug, Error)]
@@ -21,6 +25,12 @@ pub enum GhError {
     /// I/O error running command.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// Diff exceeds maximum allowed size.
+    #[error("PR diff too large: exceeded {max} bytes")]
+    DiffTooLarge {
+        /// Maximum allowed size.
+        max: usize,
+    },
 }
 
 /// Filter for PR listing.
@@ -123,19 +133,49 @@ pub fn list_prs(
 }
 
 /// Get the unified diff for a PR.
+/// Returns error if diff exceeds `MAX_DIFF_SIZE`.
 pub fn get_pr_diff(repo_path: &std::path::Path, pr_number: u32) -> Result<String, GhError> {
-    let output = Command::new("gh")
+    let mut child = Command::new("gh")
         .args(["pr", "diff", &pr_number.to_string()])
         .current_dir(repo_path)
-        .output()?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GhError::ApiError(stderr.trim().to_string()));
+    // Read with a hard cap to prevent OOM
+    let mut stdout = child.stdout.take().expect("stdout piped");
+    let mut buffer = Vec::with_capacity(64 * 1024); // 64KB initial
+    let mut total_read = 0;
+    let mut temp = [0u8; 8192];
+
+    loop {
+        match stdout.read(&mut temp) {
+            Ok(0) => break,
+            Ok(n) => {
+                total_read += n;
+                if total_read > MAX_DIFF_SIZE {
+                    // Kill the process and return error
+                    let _ = child.kill();
+                    return Err(GhError::DiffTooLarge { max: MAX_DIFF_SIZE });
+                }
+                buffer.extend_from_slice(&temp[..n]);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.into()),
+        }
     }
 
-    String::from_utf8(output.stdout)
-        .map_err(|e| GhError::ParseError(format!("Invalid UTF-8: {}", e)))
+    let status = child.wait()?;
+    if !status.success() {
+        // Try to read stderr for error message
+        let mut stderr = child.stderr.take().expect("stderr piped");
+        let mut stderr_buf = Vec::new();
+        let _ = stderr.read_to_end(&mut stderr_buf);
+        let stderr_str = String::from_utf8_lossy(&stderr_buf);
+        return Err(GhError::ApiError(stderr_str.trim().to_string()));
+    }
+
+    String::from_utf8(buffer).map_err(|e| GhError::ParseError(format!("Invalid UTF-8: {}", e)))
 }
 
 /// Approve a PR.

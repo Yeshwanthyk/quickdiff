@@ -331,10 +331,48 @@ fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
     Ok(files)
 }
 
+/// Get the size of a blob at a given revision without reading it.
+fn get_blob_size(
+    root: &RepoRoot,
+    revision: &str,
+    path: &RelPath,
+) -> Result<Option<u64>, RepoError> {
+    let output = Command::new("git")
+        .args(["cat-file", "-s", &format!("{}:{}", revision, path.as_str())])
+        .current_dir(root.path())
+        .output()?;
+
+    if !output.status.success() {
+        // File doesn't exist at this revision
+        return Ok(None);
+    }
+
+    let size_str = std::str::from_utf8(&output.stdout)
+        .map_err(|_| RepoError::InvalidUtf8)?
+        .trim();
+
+    size_str.parse::<u64>().map(Some).map_err(|_| {
+        RepoError::GitError(format!("invalid size from git cat-file -s: {}", size_str))
+    })
+}
+
 /// Load content from HEAD for a given path.
 /// Returns error if file exceeds `MAX_FILE_SIZE`.
 #[must_use = "this returns a Result that should be checked"]
 pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, RepoError> {
+    // Preflight size check to avoid OOM on huge blobs
+    if let Some(size) = get_blob_size(root, "HEAD", path)? {
+        if size > MAX_FILE_SIZE {
+            return Err(RepoError::FileTooLarge {
+                size,
+                max: MAX_FILE_SIZE,
+            });
+        }
+    } else {
+        // File doesn't exist in HEAD (new file)
+        return Ok(Vec::new());
+    }
+
     let output = Command::new("git")
         .args(["show", &format!("HEAD:{}", path.as_str())])
         .current_dir(root.path())
@@ -343,15 +381,6 @@ pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, Rep
     if !output.status.success() {
         // File might not exist in HEAD (new file)
         return Ok(Vec::new());
-    }
-
-    // OOM protection: check size before returning
-    let size = output.stdout.len() as u64;
-    if size > MAX_FILE_SIZE {
-        return Err(RepoError::FileTooLarge {
-            size,
-            max: MAX_FILE_SIZE,
-        });
     }
 
     Ok(output.stdout)
@@ -396,6 +425,19 @@ pub fn load_revision_content(
     revision: &str,
     path: &RelPath,
 ) -> Result<Vec<u8>, RepoError> {
+    // Preflight size check to avoid OOM on huge blobs
+    if let Some(size) = get_blob_size(root, revision, path)? {
+        if size > MAX_FILE_SIZE {
+            return Err(RepoError::FileTooLarge {
+                size,
+                max: MAX_FILE_SIZE,
+            });
+        }
+    } else {
+        // File doesn't exist in this revision
+        return Ok(Vec::new());
+    }
+
     let output = Command::new("git")
         .args(["show", &format!("{}:{}", revision, path.as_str())])
         .current_dir(root.path())
@@ -404,15 +446,6 @@ pub fn load_revision_content(
     if !output.status.success() {
         // File might not exist in this revision
         return Ok(Vec::new());
-    }
-
-    // OOM protection: check size before returning
-    let size = output.stdout.len() as u64;
-    if size > MAX_FILE_SIZE {
-        return Err(RepoError::FileTooLarge {
-            size,
-            max: MAX_FILE_SIZE,
-        });
     }
 
     Ok(output.stdout)
