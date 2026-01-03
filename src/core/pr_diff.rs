@@ -21,23 +21,32 @@ pub struct PRChangedFile {
 
 /// Parse unified diff output into a list of changed files.
 ///
-/// Splits on `diff --git` boundaries and extracts file info + patch.
+/// Parses line-by-line to avoid false splits on file content containing
+/// "diff --git" strings.
 pub fn parse_unified_diff(raw_diff: &str) -> Vec<PRChangedFile> {
     let mut files = Vec::new();
+    let mut current_chunk = String::new();
 
-    // Split on "diff --git " but keep the delimiter
-    let chunks: Vec<&str> = raw_diff.split("diff --git ").collect();
-
-    for chunk in chunks.iter().skip(1) {
-        // Skip empty chunks
-        if chunk.trim().is_empty() {
-            continue;
+    for line in raw_diff.lines() {
+        // "diff --git" at the start of a line marks a new file boundary
+        if line.starts_with("diff --git ") {
+            // Process previous chunk if non-empty
+            if !current_chunk.is_empty() {
+                if let Some(file) = parse_file_chunk(&current_chunk) {
+                    files.push(file);
+                }
+            }
+            current_chunk = line.to_string();
+            current_chunk.push('\n');
+        } else {
+            current_chunk.push_str(line);
+            current_chunk.push('\n');
         }
+    }
 
-        // Reconstruct full chunk for patch
-        let full_chunk = format!("diff --git {}", chunk);
-
-        if let Some(file) = parse_file_chunk(&full_chunk) {
+    // Process final chunk
+    if !current_chunk.is_empty() {
+        if let Some(file) = parse_file_chunk(&current_chunk) {
             files.push(file);
         }
     }
@@ -52,8 +61,7 @@ fn parse_file_chunk(chunk: &str) -> Option<PRChangedFile> {
     let first_line = lines.first()?;
 
     // Parse header: diff --git a/path b/path
-    let header_match = parse_diff_header(first_line)?;
-    let (old_path_str, new_path_str) = header_match;
+    let (old_path_str, new_path_str) = parse_diff_header(first_line)?;
 
     // Determine status from diff metadata
     let mut kind = FileChangeKind::Modified;
@@ -106,13 +114,69 @@ fn parse_file_chunk(chunk: &str) -> Option<PRChangedFile> {
     })
 }
 
+/// Unquote a C-style quoted string if present.
+/// Git uses C-style quoting for paths with special chars.
+fn unquote_path(s: &str) -> String {
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        let inner = &s[1..s.len() - 1];
+        // Basic C-escape handling
+        let mut result = String::with_capacity(inner.len());
+        let mut chars = inner.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some('\\') => result.push('\\'),
+                    Some('"') => result.push('"'),
+                    Some(other) => {
+                        result.push('\\');
+                        result.push(other);
+                    }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    } else {
+        s.to_string()
+    }
+}
+
 /// Parse "diff --git a/path b/path" header.
 /// Returns (old_path, new_path) without a/ b/ prefixes.
-fn parse_diff_header(line: &str) -> Option<(&str, &str)> {
+/// Handles quoted paths for special characters.
+fn parse_diff_header(line: &str) -> Option<(String, String)> {
     // Format: "diff --git a/old/path b/new/path"
+    // Or with quotes: diff --git "a/path with spaces" "b/path with spaces"
     let rest = line.strip_prefix("diff --git ")?;
 
-    // Find the split point - look for " b/" pattern
+    // Try to handle quoted paths first
+    if rest.starts_with('"') {
+        // Find matching quote for first path
+        let first_end = find_closing_quote(rest, 0)?;
+        let first_quoted = &rest[..=first_end];
+
+        // Skip space and find second quoted path
+        let remainder = rest.get(first_end + 2..)?;
+        if remainder.starts_with('"') {
+            let second_end = find_closing_quote(remainder, 0)?;
+            let second_quoted = &remainder[..=second_end];
+
+            let old_path = unquote_path(first_quoted);
+            let new_path = unquote_path(second_quoted);
+
+            // Strip a/ and b/ prefixes
+            let old_path = old_path.strip_prefix("a/").unwrap_or(&old_path).to_string();
+            let new_path = new_path.strip_prefix("b/").unwrap_or(&new_path).to_string();
+
+            return Some((old_path, new_path));
+        }
+    }
+
+    // Non-quoted paths: find the split point - look for " b/" pattern
     // Handle paths with spaces by finding last " b/" occurrence
     let b_idx = rest.rfind(" b/")?;
 
@@ -123,7 +187,26 @@ fn parse_diff_header(line: &str) -> Option<(&str, &str)> {
     let old_path = a_part.strip_prefix("a/").unwrap_or(a_part);
     let new_path = b_part.strip_prefix("b/").unwrap_or(b_part);
 
-    Some((old_path, new_path))
+    Some((old_path.to_string(), new_path.to_string()))
+}
+
+/// Find the index of the closing quote, accounting for escapes.
+fn find_closing_quote(s: &str, start: usize) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.get(start) != Some(&b'"') {
+        return None;
+    }
+    let mut i = start + 1;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 2; // Skip escaped char
+        } else if bytes[i] == b'"' {
+            return Some(i);
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -249,5 +332,51 @@ index 333..444 100644
         let (old, new) = parse_diff_header(header).unwrap();
         assert_eq!(old, "old/path.rs");
         assert_eq!(new, "new/path.rs");
+    }
+
+    #[test]
+    fn parse_file_content_with_diff_git_line() {
+        // A file containing "diff --git" in its content should not cause false splits
+        let diff = r#"diff --git a/test.md b/test.md
+index abc123..def456 100644
+--- a/test.md
++++ b/test.md
+@@ -1,3 +1,5 @@
+ # Example
++This line shows: diff --git a/fake b/fake
++Another line with diff --git in content
+ End of file
+"#;
+        let files = parse_unified_diff(diff);
+        assert_eq!(files.len(), 1); // Should be 1 file, not 3
+        assert_eq!(files[0].path.as_str(), "test.md");
+        assert_eq!(files[0].additions, 2);
+    }
+
+    #[test]
+    fn parse_quoted_path() {
+        // Git quotes paths with special characters
+        let diff = r#"diff --git "a/path with spaces.txt" "b/path with spaces.txt"
+new file mode 100644
+index 0000000..abc123
+--- /dev/null
++++ "b/path with spaces.txt"
+@@ -0,0 +1 @@
++content
+"#;
+        let files = parse_unified_diff(diff);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path.as_str(), "path with spaces.txt");
+        assert_eq!(files[0].kind, FileChangeKind::Added);
+    }
+
+    #[test]
+    fn unquote_path_escapes() {
+        assert_eq!(unquote_path(r#""simple""#), "simple");
+        assert_eq!(unquote_path(r#""with\\backslash""#), "with\\backslash");
+        assert_eq!(unquote_path(r#""with\ttab""#), "with\ttab");
+        assert_eq!(unquote_path(r#""with\"quote""#), "with\"quote");
+        // Unquoted strings pass through
+        assert_eq!(unquote_path("unquoted"), "unquoted");
     }
 }
