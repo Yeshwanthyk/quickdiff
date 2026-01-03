@@ -35,6 +35,9 @@ pub enum RepoError {
         /// Maximum allowed size.
         max: u64,
     },
+    /// Operation not supported for PR diff sources.
+    #[error("operation not supported for PR diff sources; use patch extraction instead")]
+    UnsupportedForPR,
 }
 
 /// Error when constructing a RelPath with an absolute path.
@@ -552,7 +555,7 @@ pub fn load_diff_contents(
         DiffSource::PullRequest { .. } => {
             // PR mode uses patch extraction, not git show.
             // This should not be called for PR sources.
-            unreachable!("load_diff_contents should not be called for PR sources")
+            Err(RepoError::UnsupportedForPR)
         }
     }
 }
