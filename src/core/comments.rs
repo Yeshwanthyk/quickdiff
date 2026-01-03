@@ -172,14 +172,18 @@ pub fn format_anchor_summary(anchor: &Anchor) -> String {
         .selectors
         .iter()
         .map(|s| match s {
-            Selector::DiffHunkV1(h) => format!(
-                "@@ -{},{} +{},{} @@ [{}]",
-                h.old_range.0 + 1,
-                h.old_range.1,
-                h.new_range.0 + 1,
-                h.new_range.1,
-                &h.digest_hex[..8]
-            ),
+            Selector::DiffHunkV1(h) => {
+                // Safe truncation: use get() to avoid panic on short/malformed digests
+                let digest_prefix = h.digest_hex.get(..8).unwrap_or(&h.digest_hex);
+                format!(
+                    "@@ -{},{} +{},{} @@ [{}]",
+                    h.old_range.0 + 1,
+                    h.old_range.1,
+                    h.new_range.0 + 1,
+                    h.new_range.1,
+                    digest_prefix
+                )
+            }
         })
         .collect::<Vec<_>>()
         .join("; ")
@@ -240,5 +244,45 @@ mod tests {
         assert!(!CommentContext::Worktree.matches(&CommentContext::Base {
             base: "origin/main".to_string(),
         }));
+    }
+
+    #[test]
+    fn format_anchor_summary_short_digest() {
+        // Test with a short/malformed digest that would panic with direct slicing
+        let anchor = Anchor {
+            selectors: vec![Selector::DiffHunkV1(DiffHunkSelectorV1 {
+                old_range: (0, 1),
+                new_range: (0, 2),
+                digest_hex: "abc".to_string(), // Only 3 chars, less than 8
+            })],
+        };
+        let summary = format_anchor_summary(&anchor);
+        assert!(summary.contains("[abc]")); // Should use full short digest
+    }
+
+    #[test]
+    fn format_anchor_summary_empty_digest() {
+        let anchor = Anchor {
+            selectors: vec![Selector::DiffHunkV1(DiffHunkSelectorV1 {
+                old_range: (10, 5),
+                new_range: (12, 7),
+                digest_hex: String::new(), // Empty digest
+            })],
+        };
+        let summary = format_anchor_summary(&anchor);
+        assert!(summary.contains("[]")); // Should handle gracefully
+    }
+
+    #[test]
+    fn format_anchor_summary_normal_digest() {
+        let anchor = Anchor {
+            selectors: vec![Selector::DiffHunkV1(DiffHunkSelectorV1 {
+                old_range: (0, 3),
+                new_range: (0, 4),
+                digest_hex: "0123456789abcdef".to_string(), // Full 16 chars
+            })],
+        };
+        let summary = format_anchor_summary(&anchor);
+        assert!(summary.contains("[01234567]")); // Should truncate to 8 chars
     }
 }
