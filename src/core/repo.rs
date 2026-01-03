@@ -457,8 +457,9 @@ pub fn load_revision_content(
 /// Resolve the merge-base between a base ref and HEAD.
 #[must_use = "this returns a Result that should be checked"]
 pub fn resolve_merge_base(root: &RepoRoot, base: &str) -> Result<String, RepoError> {
+    // Use -- to prevent refs like "-x" from being interpreted as options
     let output = Command::new("git")
-        .args(["merge-base", base, "HEAD"])
+        .args(["merge-base", "--", base, "HEAD"])
         .current_dir(root.path())
         .output()?;
 
@@ -563,8 +564,9 @@ pub fn load_diff_contents(
 /// Resolve a revision to its full SHA.
 #[must_use = "this returns a Result that should be checked"]
 pub fn resolve_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
+    // Use -- to prevent refs like "-x" from being interpreted as options
     let output = Command::new("git")
-        .args(["rev-parse", "--verify", revision])
+        .args(["rev-parse", "--verify", "--", revision])
         .current_dir(root.path())
         .output()?;
 
@@ -583,8 +585,9 @@ pub fn resolve_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoE
 /// Get the parent commit of a revision.
 #[must_use = "this returns a Result that should be checked"]
 pub fn get_parent_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
+    // Use -- to prevent refs like "-x" from being interpreted as options
     let output = Command::new("git")
-        .args(["rev-parse", "--verify", &format!("{}^", revision)])
+        .args(["rev-parse", "--verify", "--", &format!("{}^", revision)])
         .current_dir(root.path())
         .output()?;
 
@@ -608,6 +611,8 @@ pub fn list_changed_files_between(
     from: &str,
     to: &str,
 ) -> Result<Vec<ChangedFile>, RepoError> {
+    // Use -- to separate options from refs, preventing refs like "-x" from being
+    // interpreted as options
     let output = Command::new("git")
         .args([
             "diff",
@@ -615,6 +620,7 @@ pub fn list_changed_files_between(
             "-z",
             "--find-renames",
             "--find-copies",
+            "--",
             from,
             to,
         ])
