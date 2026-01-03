@@ -364,8 +364,9 @@ pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, Rep
 pub fn load_working_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, RepoError> {
     let full_path = path.to_absolute(root);
 
-    // Check if it's a regular file first
-    match std::fs::metadata(&full_path) {
+    // Use symlink_metadata to avoid following symlinks.
+    // Symlinks are treated as empty to avoid escaping the repo.
+    match std::fs::symlink_metadata(&full_path) {
         Ok(meta) if meta.is_file() => {
             // Check file size limit
             if meta.len() > MAX_FILE_SIZE {
