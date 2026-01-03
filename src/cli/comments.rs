@@ -36,6 +36,24 @@ pub fn run_comments_command(repo: &RepoRoot, args: &[String]) -> ExitCode {
     }
 }
 
+/// Flags that take a value argument. Used to skip values when parsing.
+const FLAGS_WITH_VALUES: &[&str] = &[
+    "--base",
+    "--commit",
+    "--range",
+    "--path",
+    "--hunk",
+    "--old-line",
+    "--new-line",
+    "--message",
+    "-m",
+];
+
+/// Check if arg is a known flag that takes a value.
+fn takes_value(arg: &str) -> bool {
+    FLAGS_WITH_VALUES.contains(&arg)
+}
+
 fn parse_context(
     repo: &RepoRoot,
     args: &[String],
@@ -47,7 +65,8 @@ fn parse_context(
 
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
+        let arg = args[i].as_str();
+        match arg {
             "--worktree" => {
                 worktree = true;
             }
@@ -71,6 +90,10 @@ fn parse_context(
                     return Err("--range requires a value".to_string());
                 }
                 range = Some(args[i].clone());
+            }
+            // Skip values for other known flags to avoid misinterpreting them
+            other if takes_value(other) => {
+                i += 1; // Skip the value
             }
             _ => {}
         }
@@ -169,12 +192,15 @@ fn context_summary(ctx: &CommentContext) -> String {
         CommentContext::Unscoped => "any".to_string(),
         CommentContext::Worktree => "worktree".to_string(),
         CommentContext::Base { base } => format!("base:{}", base),
-        CommentContext::Commit { commit } => format!("commit:{}", &commit[..7.min(commit.len())]),
-        CommentContext::Range { from, to } => format!(
-            "range:{}..{}",
-            &from[..7.min(from.len())],
-            &to[..7.min(to.len())]
-        ),
+        CommentContext::Commit { commit } => {
+            let short: String = commit.chars().take(7).collect();
+            format!("commit:{}", short)
+        }
+        CommentContext::Range { from, to } => {
+            let short_from: String = from.chars().take(7).collect();
+            let short_to: String = to.chars().take(7).collect();
+            format!("range:{}..{}", short_from, short_to)
+        }
     }
 }
 
@@ -186,7 +212,8 @@ fn cmd_list(repo: &RepoRoot, args: &[String]) -> ExitCode {
 
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
+        let arg = args[i].as_str();
+        match arg {
             "--all" => include_resolved = true,
             "--json" => json_output = true,
             "--path" => {
@@ -196,6 +223,10 @@ fn cmd_list(repo: &RepoRoot, args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
                 filter_path = Some(args[i].clone());
+            }
+            // Skip values for other known flags
+            other if takes_value(other) => {
+                i += 1;
             }
             _ => {}
         }
@@ -303,7 +334,8 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
 
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
+        let arg = args[i].as_str();
+        match arg {
             "--path" => {
                 i += 1;
                 if i >= args.len() {
@@ -364,6 +396,10 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
                 message = Some(args[i].clone());
+            }
+            // Skip values for context flags (handled by parse_context)
+            other if takes_value(other) => {
+                i += 1;
             }
             _ => {}
         }
@@ -481,7 +517,7 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
                 .hunks()
                 .get(hunk_idx)
                 .map(|h| digest_hunk_changed_rows(&diff, h))
-                .map(|d| d[..8].to_string())
+                .map(|d| d.get(..8).unwrap_or(&d).to_string())
                 .unwrap_or_else(|| "????????".to_string());
             println!("Created comment {} [{}]", id, digest_prefix);
             ExitCode::SUCCESS
