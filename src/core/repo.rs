@@ -5,6 +5,8 @@ use std::process::Command;
 
 use thiserror::Error;
 
+use git2::Repository;
+
 /// Maximum file size to load (50 MiB). Prevents OOM on huge files.
 pub const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
 
@@ -98,25 +100,13 @@ impl RepoRoot {
     /// ```
     #[must_use = "this returns a Result that should be checked"]
     pub fn discover(path: &Path) -> Result<Self, RepoError> {
-        let output = Command::new("git")
-            .arg("rev-parse")
-            .arg("--show-toplevel")
-            .current_dir(path)
-            .output()?;
-
-        if !output.status.success() {
-            return Err(RepoError::NotARepo);
-        }
-
-        let root = std::str::from_utf8(&output.stdout)
-            .map_err(|_| RepoError::InvalidUtf8)?
-            .trim();
-
-        let canonical = PathBuf::from(root)
+        let repo = Repository::discover(path).map_err(|_| RepoError::NotARepo)?;
+        let root = repo
+            .workdir()
+            .ok_or(RepoError::NotARepo)?
             .canonicalize()
             .map_err(|_| RepoError::NotARepo)?;
-
-        Ok(Self(canonical))
+        Ok(Self(root))
     }
 
     /// Get the repository root path.
@@ -129,6 +119,56 @@ impl RepoRoot {
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.to_str().unwrap_or("")
+    }
+}
+
+/// A git repository handle using libgit2.
+/// Provides native git operations without subprocess overhead.
+pub struct GitRepo {
+    inner: Repository,
+    root: PathBuf,
+}
+
+impl std::fmt::Debug for GitRepo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitRepo")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
+}
+
+impl GitRepo {
+    /// Open a git repository at the exact path.
+    pub fn open(path: &Path) -> Result<Self, RepoError> {
+        let repo = Repository::open(path).map_err(|_| RepoError::NotARepo)?;
+        let root = repo
+            .workdir()
+            .ok_or(RepoError::NotARepo)?
+            .to_path_buf();
+        Ok(Self { inner: repo, root })
+    }
+
+    /// Discover the git repository containing the given path.
+    pub fn discover(path: &Path) -> Result<Self, RepoError> {
+        let repo = Repository::discover(path).map_err(|_| RepoError::NotARepo)?;
+        let root = repo
+            .workdir()
+            .ok_or(RepoError::NotARepo)?
+            .canonicalize()
+            .map_err(|_| RepoError::NotARepo)?;
+        Ok(Self { inner: repo, root })
+    }
+
+    /// Get the repository root path.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Get a reference to the underlying git2 Repository.
+    #[must_use]
+    pub fn repo(&self) -> &Repository {
+        &self.inner
     }
 }
 
