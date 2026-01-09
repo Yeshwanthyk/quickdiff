@@ -1,44 +1,51 @@
 //! Integration tests with real git repositories.
 
-use std::process::Command;
+use std::path::Path;
+use git2::{Repository, Signature};
 use tempfile::TempDir;
 
-/// Create a temporary git repo with some commits.
+/// Create a temporary git repo with some commits using git2.
 fn create_test_repo() -> TempDir {
     let dir = TempDir::new().unwrap();
     let path = dir.path();
 
-    // Initialize repo
-    Command::new("git")
-        .args(["init"])
-        .current_dir(path)
-        .output()
-        .unwrap();
+    // Initialize repo with git2
+    let repo = Repository::init(path).expect("failed to init repo");
 
     // Configure git for commits
-    Command::new("git")
-        .args(["config", "user.email", "test@test.com"])
-        .current_dir(path)
-        .output()
-        .unwrap();
-    Command::new("git")
-        .args(["config", "user.name", "Test"])
-        .current_dir(path)
-        .output()
-        .unwrap();
+    let mut config = repo.config().expect("failed to get config");
+    config
+        .set_str("user.email", "test@test.com")
+        .expect("failed to set email");
+    config
+        .set_str("user.name", "Test")
+        .expect("failed to set name");
 
-    // Create initial commit
-    std::fs::write(path.join("file.txt"), "initial content\n").unwrap();
-    Command::new("git")
-        .args(["add", "."])
-        .current_dir(path)
-        .output()
-        .unwrap();
-    Command::new("git")
-        .args(["commit", "-m", "initial"])
-        .current_dir(path)
-        .output()
-        .unwrap();
+    // Create initial file
+    std::fs::write(path.join("file.txt"), "initial content\n").expect("failed to write file");
+
+    // Stage file
+    let mut index = repo.index().expect("failed to get index");
+    index
+        .add_path(Path::new("file.txt"))
+        .expect("failed to add file");
+    index.write().expect("failed to write index");
+
+    // Create tree from index
+    let tree_oid = index.write_tree().expect("failed to write tree");
+    let tree = repo.find_tree(tree_oid).expect("failed to find tree");
+
+    // Create signature and commit
+    let sig = Signature::now("Test", "test@test.com").expect("failed to create signature");
+    repo.commit(
+        Some("HEAD"),
+        &sig,
+        &sig,
+        "initial",
+        &tree,
+        &[], // No parents for initial commit
+    )
+    .expect("failed to create commit");
 
     dir
 }
