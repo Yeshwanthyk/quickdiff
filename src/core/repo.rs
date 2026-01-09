@@ -5,7 +5,7 @@ use std::process::Command;
 
 use thiserror::Error;
 
-use git2::Repository;
+use git2::{DiffFindOptions, DiffOptions, Repository, Status, StatusOptions};
 
 /// Maximum file size to load (50 MiB). Prevents OOM on huge files.
 pub const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
@@ -353,17 +353,79 @@ impl ChangedFile {
 /// List changed files in the working tree vs HEAD.
 #[must_use = "this returns a Result that should be checked"]
 pub fn list_changed_files(root: &RepoRoot) -> Result<Vec<ChangedFile>, RepoError> {
-    let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "-z", "-uall"])
-        .current_dir(root.path())
-        .output()?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(RepoError::GitError(stderr.to_string()));
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .include_ignored(false)
+        .exclude_submodules(true);
+
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .map_err(|e| RepoError::GitError(format!("failed to get status: {}", e)))?;
+
+    let mut files = Vec::new();
+
+    for entry in statuses.iter() {
+        let path = match entry.path() {
+            Some(p) => p,
+            None => continue,
+        };
+
+        // Skip .quickdiff/ internal files
+        if path.starts_with(".quickdiff/") {
+            continue;
+        }
+
+        let status = entry.status();
+        let kind = status_to_change_kind(status);
+
+        // Handle renames (check for both old and new paths)
+        if status.contains(Status::INDEX_RENAMED) || status.contains(Status::WT_RENAMED) {
+            if let Some(diff_delta) = entry.head_to_index() {
+                if let (Some(old), Some(new)) = (
+                    diff_delta.old_file().path().and_then(|p| p.to_str()),
+                    diff_delta.new_file().path().and_then(|p| p.to_str()),
+                ) {
+                    if old != new {
+                        files.push(ChangedFile::renamed(
+                            RelPath::new(old),
+                            RelPath::new(new),
+                        ));
+                        continue;
+                    }
+                }
+            }
+        }
+
+        files.push(ChangedFile::new(RelPath::new(path), kind));
     }
 
-    parse_porcelain_status(&output.stdout)
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// Convert git2 Status flags to FileChangeKind.
+fn status_to_change_kind(status: Status) -> FileChangeKind {
+    if status.contains(Status::WT_NEW) || status.contains(Status::INDEX_NEW) {
+        if status.contains(Status::INDEX_NEW) {
+            FileChangeKind::Added
+        } else {
+            FileChangeKind::Untracked
+        }
+    } else if status.contains(Status::WT_DELETED) || status.contains(Status::INDEX_DELETED) {
+        FileChangeKind::Deleted
+    } else if status.contains(Status::WT_RENAMED) || status.contains(Status::INDEX_RENAMED) {
+        FileChangeKind::Renamed
+    } else if status.contains(Status::WT_MODIFIED)
+        || status.contains(Status::INDEX_MODIFIED)
+        || status.contains(Status::WT_TYPECHANGE)
+        || status.contains(Status::INDEX_TYPECHANGE)
+    {
+        FileChangeKind::Modified
+    } else {
+        FileChangeKind::Modified // Fallback
+    }
 }
 
 /// Parse `git status --porcelain=v1 -z` output.
@@ -689,28 +751,79 @@ pub fn list_changed_files_between(
     from: &str,
     to: &str,
 ) -> Result<Vec<ChangedFile>, RepoError> {
-    // Use -- to separate options from refs, preventing refs like "-x" from being
-    // interpreted as options
-    let output = Command::new("git")
-        .args([
-            "diff",
-            "--name-status",
-            "-z",
-            "--find-renames",
-            "--find-copies",
-            "--",
-            from,
-            to,
-        ])
-        .current_dir(root.path())
-        .output()?;
+    validate_ref_format(from)?;
+    validate_ref_format(to)?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(RepoError::GitError(stderr.to_string()));
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+
+    // Resolve commits
+    let from_obj = repo
+        .revparse_single(from)
+        .map_err(|_| RepoError::InvalidRevision(from.to_string()))?;
+    let from_tree = from_obj
+        .peel_to_tree()
+        .map_err(|_| RepoError::InvalidRevision(from.to_string()))?;
+
+    let to_obj = repo
+        .revparse_single(to)
+        .map_err(|_| RepoError::InvalidRevision(to.to_string()))?;
+    let to_tree = to_obj
+        .peel_to_tree()
+        .map_err(|_| RepoError::InvalidRevision(to.to_string()))?;
+
+    // Create diff with rename/copy detection
+    let mut opts = DiffOptions::new();
+    let mut diff = repo
+        .diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))
+        .map_err(|e| RepoError::GitError(format!("failed to create diff: {}", e)))?;
+
+    // Enable rename detection
+    let mut find_opts = DiffFindOptions::new();
+    find_opts.renames(true);
+    diff.find_similar(Some(&mut find_opts))
+        .map_err(|e| RepoError::GitError(format!("failed to find renames: {}", e)))?;
+
+    let mut files = Vec::new();
+
+    for delta in diff.deltas() {
+        let new_path = delta
+            .new_file()
+            .path()
+            .and_then(|p| p.to_str())
+            .unwrap_or("");
+        let old_path = delta
+            .old_file()
+            .path()
+            .and_then(|p| p.to_str());
+
+        if new_path.is_empty() {
+            continue;
+        }
+
+        let kind = match delta.status() {
+            git2::Delta::Added => FileChangeKind::Added,
+            git2::Delta::Deleted => FileChangeKind::Deleted,
+            git2::Delta::Modified => FileChangeKind::Modified,
+            git2::Delta::Renamed | git2::Delta::Copied => {
+                if let Some(old) = old_path {
+                    if old != new_path {
+                        files.push(ChangedFile::renamed(
+                            RelPath::new(old),
+                            RelPath::new(new_path),
+                        ));
+                        continue;
+                    }
+                }
+                FileChangeKind::Modified
+            }
+            _ => FileChangeKind::Modified,
+        };
+
+        files.push(ChangedFile::new(RelPath::new(new_path), kind));
     }
 
-    parse_diff_name_status(&output.stdout)
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
 }
 
 /// List changed files in a single commit.
@@ -836,17 +949,14 @@ pub fn diff_source_display(source: &DiffSource, root: &RepoRoot) -> String {
     match source {
         DiffSource::WorkingTree => "Working Tree".to_string(),
         DiffSource::Commit(c) => {
-            // Try to get short commit message
-            let output = Command::new("git")
-                .args(["log", "-1", "--format=%h %s", c])
-                .current_dir(root.path())
-                .output();
-
-            if let Ok(out) = output {
-                if out.status.success() {
-                    if let Ok(msg) = std::str::from_utf8(&out.stdout) {
-                        let msg = msg.trim();
-                        return truncate_chars(msg, 50);
+            // Try to get short commit message using git2
+            if let Ok(repo) = Repository::open(root.path()) {
+                if let Ok(obj) = repo.revparse_single(c) {
+                    if let Ok(commit) = obj.peel_to_commit() {
+                        let short_id = &commit.id().to_string()[..7];
+                        let summary = commit.summary().unwrap_or("");
+                        let msg = format!("{} {}", short_id, summary);
+                        return truncate_chars(&msg, 50);
                     }
                 }
             }
