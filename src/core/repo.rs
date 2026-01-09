@@ -1,7 +1,6 @@
 //! Git repository discovery and file operations.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use thiserror::Error;
 
@@ -417,18 +416,15 @@ fn status_to_change_kind(status: Status) -> FileChangeKind {
         FileChangeKind::Deleted
     } else if status.contains(Status::WT_RENAMED) || status.contains(Status::INDEX_RENAMED) {
         FileChangeKind::Renamed
-    } else if status.contains(Status::WT_MODIFIED)
-        || status.contains(Status::INDEX_MODIFIED)
-        || status.contains(Status::WT_TYPECHANGE)
-        || status.contains(Status::INDEX_TYPECHANGE)
-    {
-        FileChangeKind::Modified
     } else {
-        FileChangeKind::Modified // Fallback
+        // Modified, typechange, or any other status defaults to Modified
+        FileChangeKind::Modified
     }
 }
 
 /// Parse `git status --porcelain=v1 -z` output.
+/// Retained for unit test coverage of parsing logic.
+#[cfg(test)]
 fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> {
     let text = std::str::from_utf8(output).map_err(|_| RepoError::InvalidUtf8)?;
     let mut files = Vec::new();
@@ -885,6 +881,9 @@ pub fn list_changed_files_from_base(
 }
 
 /// Parse `git diff --name-status -z` output.
+/// Retained for unit test coverage of parsing logic.
+#[cfg(test)]
+#[allow(dead_code)]
 fn parse_diff_name_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> {
     let text = std::str::from_utf8(output).map_err(|_| RepoError::InvalidUtf8)?;
     let mut files = Vec::new();
