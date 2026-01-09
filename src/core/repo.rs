@@ -172,6 +172,18 @@ impl GitRepo {
     }
 }
 
+/// Validate that a reference doesn't look like a flag (defense in depth).
+fn validate_ref_format(reference: &str) -> Result<(), RepoError> {
+    let reference = reference.trim();
+    if reference.starts_with('-') {
+        return Err(RepoError::InvalidRevision(format!(
+            "references cannot start with '-': {}",
+            reference
+        )));
+    }
+    Ok(())
+}
+
 /// A repository-relative path. Never absolute.
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
@@ -497,20 +509,34 @@ pub fn load_revision_content(
 /// Resolve the merge-base between a base ref and HEAD.
 #[must_use = "this returns a Result that should be checked"]
 pub fn resolve_merge_base(root: &RepoRoot, base: &str) -> Result<String, RepoError> {
-    // Use -- to prevent refs like "-x" from being interpreted as options
-    let output = Command::new("git")
-        .args(["merge-base", "--", base, "HEAD"])
-        .current_dir(root.path())
-        .output()?;
+    let base = base.trim();
+    validate_ref_format(base)?;
 
-    if output.status.success() {
-        Ok(std::str::from_utf8(&output.stdout)
-            .map_err(|_| RepoError::InvalidUtf8)?
-            .trim()
-            .to_string())
-    } else {
-        // Fall back to using the base ref directly
-        resolve_revision(root, base)
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+
+    // Resolve base ref
+    let base_obj = repo
+        .revparse_single(base)
+        .map_err(|_| RepoError::InvalidRevision(base.to_string()))?;
+    let base_commit = base_obj
+        .peel_to_commit()
+        .map_err(|_| RepoError::InvalidRevision(base.to_string()))?;
+
+    // Resolve HEAD
+    let head = repo
+        .head()
+        .map_err(|e| RepoError::GitError(format!("failed to get HEAD: {}", e)))?;
+    let head_commit = head
+        .peel_to_commit()
+        .map_err(|e| RepoError::GitError(format!("failed to peel HEAD: {}", e)))?;
+
+    // Find merge base
+    match repo.merge_base(base_commit.id(), head_commit.id()) {
+        Ok(oid) => Ok(oid.to_string()),
+        Err(_) => {
+            // Fall back to using the base ref directly (same as before)
+            Ok(base_commit.id().to_string())
+        }
     }
 }
 
@@ -604,44 +630,47 @@ pub fn load_diff_contents(
 /// Resolve a revision to its full SHA.
 #[must_use = "this returns a Result that should be checked"]
 pub fn resolve_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
-    // Use -- to prevent refs like "-x" from being interpreted as options
-    let output = Command::new("git")
-        .args(["rev-parse", "--verify", "--", revision])
-        .current_dir(root.path())
-        .output()?;
+    let revision = revision.trim();
+    validate_ref_format(revision)?;
 
-    if !output.status.success() {
-        return Err(RepoError::InvalidRevision(revision.to_string()));
-    }
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let obj = repo
+        .revparse_single(revision)
+        .map_err(|_| RepoError::InvalidRevision(revision.to_string()))?;
 
-    let sha = std::str::from_utf8(&output.stdout)
-        .map_err(|_| RepoError::InvalidUtf8)?
-        .trim()
-        .to_string();
+    // Peel to commit to ensure we have a valid commit-ish
+    let commit = obj
+        .peel_to_commit()
+        .map_err(|_| RepoError::InvalidRevision(revision.to_string()))?;
 
-    Ok(sha)
+    Ok(commit.id().to_string())
 }
+
+/// Git's well-known empty tree SHA.
+const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Get the parent commit of a revision.
 #[must_use = "this returns a Result that should be checked"]
 pub fn get_parent_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
-    // Use -- to prevent refs like "-x" from being interpreted as options
-    let output = Command::new("git")
-        .args(["rev-parse", "--verify", "--", &format!("{}^", revision)])
-        .current_dir(root.path())
-        .output()?;
+    let revision = revision.trim();
+    validate_ref_format(revision)?;
 
-    if !output.status.success() {
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let obj = repo
+        .revparse_single(revision)
+        .map_err(|_| RepoError::InvalidRevision(revision.to_string()))?;
+    let commit = obj
+        .peel_to_commit()
+        .map_err(|_| RepoError::InvalidRevision(revision.to_string()))?;
+
+    if commit.parent_count() > 0 {
+        Ok(commit.parent_id(0)
+            .map_err(|e| RepoError::GitError(format!("failed to get parent: {}", e)))?
+            .to_string())
+    } else {
         // No parent (initial commit) - return empty tree
-        return Ok("4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string()); // git empty tree
+        Ok(EMPTY_TREE_SHA.to_string())
     }
-
-    let sha = std::str::from_utf8(&output.stdout)
-        .map_err(|_| RepoError::InvalidUtf8)?
-        .trim()
-        .to_string();
-
-    Ok(sha)
 }
 
 /// List changed files between two revisions.
