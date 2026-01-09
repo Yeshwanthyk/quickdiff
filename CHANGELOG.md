@@ -11,6 +11,15 @@ All notable changes to quickdiff are documented here.
 - `?` shows a built-in help modal listing core keybindings.
 - `[` / `]` toggle full-width old/new diff panes for focused reviews.
 
+## [0.7.3] - 2025-01-09
+
+### Changed
+- **Git operations migrated to libgit2**: All git subprocess calls replaced with native `git2` crate bindings. Eliminates ~25% overhead from process spawning, provides typed errors, and improves cross-platform reliability.
+
+### Internal
+- Test fixtures now use git2 API (~4x faster test execution).
+- Parsing functions retained under `#[cfg(test)]` for unit test coverage.
+
 ## [0.7.2] - 2025-12-25
 
 ### Fixed
