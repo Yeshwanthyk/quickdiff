@@ -184,6 +184,39 @@ fn validate_ref_format(reference: &str) -> Result<(), RepoError> {
     Ok(())
 }
 
+/// Look up a blob at a given revision and path.
+/// Returns None if the file doesn't exist at that revision.
+fn lookup_blob<'a>(
+    repo: &'a Repository,
+    revision: &str,
+    path: &RelPath,
+) -> Result<Option<git2::Blob<'a>>, RepoError> {
+    let obj = match repo.revparse_single(revision) {
+        Ok(obj) => obj,
+        Err(_) => return Err(RepoError::InvalidRevision(revision.to_string())),
+    };
+
+    let commit = match obj.peel_to_commit() {
+        Ok(c) => c,
+        Err(_) => return Err(RepoError::InvalidRevision(revision.to_string())),
+    };
+
+    let tree = commit
+        .tree()
+        .map_err(|e| RepoError::GitError(format!("failed to get tree: {}", e)))?;
+
+    let entry = match tree.get_path(Path::new(path.as_str())) {
+        Ok(entry) => entry,
+        Err(_) => return Ok(None), // File doesn't exist at this revision
+    };
+
+    let blob = repo
+        .find_blob(entry.id())
+        .map_err(|e| RepoError::GitError(format!("failed to find blob: {}", e)))?;
+
+    Ok(Some(blob))
+}
+
 /// A repository-relative path. Never absolute.
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
@@ -387,58 +420,39 @@ fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
 }
 
 /// Get the size of a blob at a given revision without reading it.
+#[allow(dead_code)]
 fn get_blob_size(
     root: &RepoRoot,
     revision: &str,
     path: &RelPath,
 ) -> Result<Option<u64>, RepoError> {
-    let output = Command::new("git")
-        .args(["cat-file", "-s", &format!("{}:{}", revision, path.as_str())])
-        .current_dir(root.path())
-        .output()?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
 
-    if !output.status.success() {
-        // File doesn't exist at this revision
-        return Ok(None);
-    }
-
-    let size_str = std::str::from_utf8(&output.stdout)
-        .map_err(|_| RepoError::InvalidUtf8)?
-        .trim();
-
-    size_str.parse::<u64>().map(Some).map_err(|_| {
-        RepoError::GitError(format!("invalid size from git cat-file -s: {}", size_str))
-    })
+    let result = lookup_blob(&repo, revision, path)?;
+    Ok(result.map(|blob| blob.size() as u64))
 }
 
 /// Load content from HEAD for a given path.
 /// Returns error if file exceeds `MAX_FILE_SIZE`.
 #[must_use = "this returns a Result that should be checked"]
 pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, RepoError> {
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+
+    let blob = match lookup_blob(&repo, "HEAD", path)? {
+        Some(b) => b,
+        None => return Ok(Vec::new()), // File doesn't exist in HEAD (new file)
+    };
+
     // Preflight size check to avoid OOM on huge blobs
-    if let Some(size) = get_blob_size(root, "HEAD", path)? {
-        if size > MAX_FILE_SIZE {
-            return Err(RepoError::FileTooLarge {
-                size,
-                max: MAX_FILE_SIZE,
-            });
-        }
-    } else {
-        // File doesn't exist in HEAD (new file)
-        return Ok(Vec::new());
+    let size = blob.size() as u64;
+    if size > MAX_FILE_SIZE {
+        return Err(RepoError::FileTooLarge {
+            size,
+            max: MAX_FILE_SIZE,
+        });
     }
 
-    let output = Command::new("git")
-        .args(["show", &format!("HEAD:{}", path.as_str())])
-        .current_dir(root.path())
-        .output()?;
-
-    if !output.status.success() {
-        // File might not exist in HEAD (new file)
-        return Ok(Vec::new());
-    }
-
-    Ok(output.stdout)
+    Ok(blob.content().to_vec())
 }
 
 /// Load content from the working tree.
@@ -480,30 +494,25 @@ pub fn load_revision_content(
     revision: &str,
     path: &RelPath,
 ) -> Result<Vec<u8>, RepoError> {
+    validate_ref_format(revision)?;
+
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+
+    let blob = match lookup_blob(&repo, revision, path)? {
+        Some(b) => b,
+        None => return Ok(Vec::new()), // File doesn't exist in this revision
+    };
+
     // Preflight size check to avoid OOM on huge blobs
-    if let Some(size) = get_blob_size(root, revision, path)? {
-        if size > MAX_FILE_SIZE {
-            return Err(RepoError::FileTooLarge {
-                size,
-                max: MAX_FILE_SIZE,
-            });
-        }
-    } else {
-        // File doesn't exist in this revision
-        return Ok(Vec::new());
+    let size = blob.size() as u64;
+    if size > MAX_FILE_SIZE {
+        return Err(RepoError::FileTooLarge {
+            size,
+            max: MAX_FILE_SIZE,
+        });
     }
 
-    let output = Command::new("git")
-        .args(["show", &format!("{}:{}", revision, path.as_str())])
-        .current_dir(root.path())
-        .output()?;
-
-    if !output.status.success() {
-        // File might not exist in this revision
-        return Ok(Vec::new());
-    }
-
-    Ok(output.stdout)
+    Ok(blob.content().to_vec())
 }
 
 /// Resolve the merge-base between a base ref and HEAD.
