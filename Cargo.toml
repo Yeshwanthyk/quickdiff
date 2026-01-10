@@ -47,12 +47,20 @@ parking_lot = "0.12.5"
 # Native git bindings (libgit2)
 git2 = "0.20"
 
+# Jujutsu (jj) support
+jj-lib = { version = "0.36.0", features = ["git"], optional = true }
+chrono = { version = "0.4", optional = true }
+pollster = { version = "0.4", optional = true }
+futures = { version = "0.3", optional = true }
+tokio = { version = "1", features = ["io-util"], optional = true }
+
 # File watching
 notify = "6"
 notify-debouncer-mini = "0.4"
 
 [features]
-default = ["lang-rust", "lang-typescript", "lang-go", "lang-python", "lang-json", "lang-yaml", "lang-bash"]
+default = ["lang-rust", "lang-typescript", "lang-go", "lang-python", "lang-json", "lang-yaml", "lang-bash", "jj"]
+jj = ["dep:jj-lib", "dep:chrono", "dep:pollster", "dep:futures", "dep:tokio"]
 lang-rust = ["dep:tree-sitter-rust"]
 lang-typescript = ["dep:tree-sitter-typescript"]
 lang-go = ["dep:tree-sitter-go"]
