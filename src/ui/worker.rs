@@ -152,34 +152,16 @@ fn compute_diff_payload(repo: &RepoRoot, req: DiffLoadRequest) -> DiffLoadRespon
 
 #[derive(Debug, Clone)]
 pub(crate) enum PrRequest {
-    List {
-        id: u64,
-        filter: PRFilter,
-    },
-    LoadDiff {
-        id: u64,
-        pr_number: u32,
-    },
+    List { id: u64, filter: PRFilter },
+    LoadDiff { id: u64, pr_number: u32 },
 }
 
 #[derive(Debug)]
 pub(crate) enum PrResponse {
-    List {
-        id: u64,
-        prs: Vec<PullRequest>,
-    },
-    ListError {
-        id: u64,
-        message: String,
-    },
-    Diff {
-        id: u64,
-        diff: String,
-    },
-    DiffError {
-        id: u64,
-        message: String,
-    },
+    List { id: u64, prs: Vec<PullRequest> },
+    ListError { id: u64, message: String },
+    Diff { id: u64, diff: String },
+    DiffError { id: u64, message: String },
 }
 
 pub(crate) struct PrWorker {

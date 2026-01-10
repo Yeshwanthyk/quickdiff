@@ -1,7 +1,7 @@
 //! Integration tests with real git repositories.
 
-use std::path::Path;
 use git2::{Repository, Signature};
+use std::path::Path;
 use tempfile::TempDir;
 
 /// Create a temporary git repo with some commits using git2.
