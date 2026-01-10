@@ -272,16 +272,24 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()>
             app.clear_dirty();
         }
 
-        // Poll for events with timeout
+        // Poll for events with timeout, then drain all pending events
         if event::poll(Duration::from_millis(50))? {
-            let event = event::read()?;
-
-            // Resize always triggers redraw
-            if matches!(event, crossterm::event::Event::Resize(_, _)) {
-                app.mark_dirty();
+            // Drain all available events to reduce poll syscalls and batch processing
+            let mut events = Vec::with_capacity(8);
+            while event::poll(Duration::ZERO)? {
+                events.push(event::read()?);
             }
 
-            handle_input(app, event);
+            // Process all events
+            for ev in events {
+                if matches!(ev, crossterm::event::Event::Resize(_, _)) {
+                    app.mark_dirty();
+                }
+                handle_input(app, ev);
+                if app.should_quit {
+                    break;
+                }
+            }
         }
 
         if app.should_quit {
