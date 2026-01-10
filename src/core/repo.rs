@@ -1,10 +1,60 @@
-//! Git repository discovery and file operations.
+//! VCS repository discovery and file operations.
 
 use std::path::{Path, PathBuf};
+
+#[cfg(feature = "jj")]
+use std::collections::HashMap;
+#[cfg(feature = "jj")]
+use std::sync::Arc;
 
 use thiserror::Error;
 
 use git2::{DiffFindOptions, DiffOptions, Repository, Status, StatusOptions};
+
+#[cfg(feature = "jj")]
+use chrono::Local;
+#[cfg(feature = "jj")]
+use futures::StreamExt;
+#[cfg(feature = "jj")]
+use jj_lib::backend::TreeValue;
+#[cfg(feature = "jj")]
+use jj_lib::commit::Commit as JjCommit;
+#[cfg(feature = "jj")]
+use jj_lib::config::StackedConfig;
+#[cfg(feature = "jj")]
+use jj_lib::conflicts::{
+    materialize_merge_result_to_bytes, try_materialize_file_conflict_value, ConflictMarkerStyle,
+    ConflictMaterializeOptions,
+};
+#[cfg(feature = "jj")]
+use jj_lib::files::FileMergeHunkLevel;
+#[cfg(feature = "jj")]
+use jj_lib::matchers::EverythingMatcher;
+#[cfg(feature = "jj")]
+use jj_lib::merge::{MergedTreeValue, SameChange};
+#[cfg(feature = "jj")]
+use jj_lib::object_id::ObjectId;
+#[cfg(feature = "jj")]
+use jj_lib::repo::{ReadonlyRepo, Repo, StoreFactories};
+#[cfg(feature = "jj")]
+use jj_lib::repo_path::{RepoPath, RepoPathBuf, RepoPathUiConverter};
+#[cfg(feature = "jj")]
+use jj_lib::revset::{
+    RevsetAliasesMap, RevsetDiagnostics, RevsetExtensions, RevsetParseContext,
+    RevsetWorkspaceContext, SymbolResolver, SymbolResolverExtension,
+};
+#[cfg(feature = "jj")]
+use jj_lib::settings::UserSettings;
+#[cfg(feature = "jj")]
+use jj_lib::time_util::DatePatternContext;
+#[cfg(feature = "jj")]
+use jj_lib::tree_merge::MergeOptions;
+#[cfg(feature = "jj")]
+use jj_lib::workspace::{default_working_copy_factories, Workspace};
+#[cfg(feature = "jj")]
+use pollster::FutureExt;
+#[cfg(feature = "jj")]
+use tokio::io::AsyncReadExt;
 
 /// Maximum file size to load (50 MiB). Prevents OOM on huge files.
 pub const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
@@ -13,12 +63,15 @@ pub const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RepoError {
-    /// Path is not inside a git repository.
-    #[error("not inside a git repository")]
+    /// Path is not inside a git or jj repository.
+    #[error("not inside a git or jj repository")]
     NotARepo,
     /// Git command failed with an error message.
     #[error("git command failed: {0}")]
     GitError(String),
+    /// Jujutsu operation failed with an error message.
+    #[error("jj operation failed: {0}")]
+    JjError(String),
     /// I/O error during git operation.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -49,7 +102,7 @@ pub struct InvalidRelPath(pub String);
 /// Source specification for diff comparison.
 #[derive(Debug, Clone)]
 pub enum DiffSource {
-    /// Working tree changes vs HEAD (default behavior).
+    /// Working tree changes vs parent (HEAD/@-).
     WorkingTree,
     /// Single commit (show changes introduced by that commit).
     Commit(String),
@@ -79,14 +132,66 @@ impl Default for DiffSource {
     }
 }
 
-/// Canonicalized path to a git repository root.
+impl DiffSource {
+    /// Apply default refs for open-ended ranges.
+    pub fn apply_defaults(&mut self, default_ref: &str) {
+        if let DiffSource::Range { from, to } = self {
+            if from.is_empty() {
+                *from = default_ref.to_string();
+            }
+            if to.is_empty() {
+                *to = default_ref.to_string();
+            }
+        }
+    }
+}
+
+/// Detected VCS type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VcsType {
+    /// Git repository (.git).
+    Git,
+    /// Jujutsu repository (.jj).
+    Jj,
+}
+
+#[cfg(feature = "jj")]
+fn find_jj_root(start: &Path) -> Option<PathBuf> {
+    let mut current = if start.is_file() {
+        start.parent().unwrap_or(start)
+    } else {
+        start
+    };
+
+    loop {
+        if current.join(".jj").is_dir() {
+            return Some(current.to_path_buf());
+        }
+
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+}
+
+#[cfg(not(feature = "jj"))]
+fn find_jj_root(_start: &Path) -> Option<PathBuf> {
+    None
+}
+
+/// Canonicalized path to a VCS repository root.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RepoRoot(PathBuf);
+pub struct RepoRoot {
+    root: PathBuf,
+    vcs: VcsType,
+}
 
 impl RepoRoot {
-    /// Discover the git repository containing the given path.
+    /// Discover the git/jj repository containing the given path.
     ///
-    /// Walks up the directory tree to find a `.git` directory.
+    /// Walks up the directory tree to find a `.jj` or `.git` directory.
+    /// Prefers `.jj` when both are present (colocated repo).
     ///
     /// # Examples
     ///
@@ -94,30 +199,77 @@ impl RepoRoot {
     /// use quickdiff::core::RepoRoot;
     /// use std::path::Path;
     ///
-    /// let repo = RepoRoot::discover(Path::new(".")).expect("not in a git repo");
+    /// let repo = RepoRoot::discover(Path::new(".")).expect("not in a repo");
     /// println!("Repo at: {}", repo.path().display());
     /// ```
     #[must_use = "this returns a Result that should be checked"]
     pub fn discover(path: &Path) -> Result<Self, RepoError> {
+        if let Some(root) = find_jj_root(path) {
+            let root = root.canonicalize().map_err(|_| RepoError::NotARepo)?;
+            return Ok(Self {
+                root,
+                vcs: VcsType::Jj,
+            });
+        }
+
         let repo = Repository::discover(path).map_err(|_| RepoError::NotARepo)?;
         let root = repo
             .workdir()
             .ok_or(RepoError::NotARepo)?
             .canonicalize()
             .map_err(|_| RepoError::NotARepo)?;
-        Ok(Self(root))
+        Ok(Self {
+            root,
+            vcs: VcsType::Git,
+        })
     }
 
     /// Get the repository root path.
     #[must_use]
     pub fn path(&self) -> &Path {
-        &self.0
+        &self.root
     }
 
     /// Get the repository root as a string (for persistence keys).
     #[must_use]
     pub fn as_str(&self) -> &str {
-        self.0.to_str().unwrap_or("")
+        self.root.to_str().unwrap_or("")
+    }
+
+    /// Get the detected VCS type.
+    #[must_use]
+    pub fn vcs(&self) -> VcsType {
+        self.vcs
+    }
+
+    /// Returns true when the repository is Git-backed.
+    #[must_use]
+    pub fn is_git(&self) -> bool {
+        matches!(self.vcs, VcsType::Git)
+    }
+
+    /// Returns true when the repository is Jujutsu-backed.
+    #[must_use]
+    pub fn is_jj(&self) -> bool {
+        matches!(self.vcs, VcsType::Jj)
+    }
+
+    /// Default parent reference for working copy comparisons.
+    #[must_use]
+    pub fn working_copy_parent_ref(&self) -> &'static str {
+        match self.vcs {
+            VcsType::Git => "HEAD",
+            VcsType::Jj => "@-",
+        }
+    }
+
+    /// Default reference for the current working copy commit.
+    #[must_use]
+    pub fn working_copy_ref(&self) -> &'static str {
+        match self.vcs {
+            VcsType::Git => "HEAD",
+            VcsType::Jj => "@",
+        }
     }
 }
 
@@ -140,10 +292,7 @@ impl GitRepo {
     /// Open a git repository at the exact path.
     pub fn open(path: &Path) -> Result<Self, RepoError> {
         let repo = Repository::open(path).map_err(|_| RepoError::NotARepo)?;
-        let root = repo
-            .workdir()
-            .ok_or(RepoError::NotARepo)?
-            .to_path_buf();
+        let root = repo.workdir().ok_or(RepoError::NotARepo)?.to_path_buf();
         Ok(Self { inner: repo, root })
     }
 
@@ -171,8 +320,338 @@ impl GitRepo {
     }
 }
 
-/// Validate that a reference doesn't look like a flag (defense in depth).
-fn validate_ref_format(reference: &str) -> Result<(), RepoError> {
+#[cfg(feature = "jj")]
+struct JjRepo {
+    workspace: Workspace,
+    repo: Arc<ReadonlyRepo>,
+    settings: UserSettings,
+    workspace_path: PathBuf,
+}
+
+#[cfg(feature = "jj")]
+impl JjRepo {
+    fn open(path: &Path) -> Result<Self, RepoError> {
+        let config = StackedConfig::with_defaults();
+        let settings = UserSettings::from_config(config)
+            .map_err(|e| RepoError::JjError(format!("failed to create settings: {}", e)))?;
+
+        let workspace = Workspace::load(
+            &settings,
+            path,
+            &StoreFactories::default(),
+            &default_working_copy_factories(),
+        )
+        .map_err(|e| RepoError::JjError(format!("failed to load workspace: {}", e)))?;
+
+        let repo = workspace
+            .repo_loader()
+            .load_at_head()
+            .map_err(|e| RepoError::JjError(format!("failed to load repo: {}", e)))?;
+
+        Ok(Self {
+            workspace,
+            repo,
+            settings,
+            workspace_path: path.to_path_buf(),
+        })
+    }
+
+    fn with_revset_context<T, F>(&self, f: F) -> Result<T, RepoError>
+    where
+        F: FnOnce(&RevsetParseContext) -> Result<T, RepoError>,
+    {
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: self.workspace_path.clone(),
+            base: self.workspace_path.clone(),
+        };
+        let workspace_ctx = RevsetWorkspaceContext {
+            path_converter: &path_converter,
+            workspace_name: self.workspace.workspace_name(),
+        };
+
+        let context = RevsetParseContext {
+            aliases_map: &RevsetAliasesMap::default(),
+            local_variables: HashMap::new(),
+            user_email: self.settings.user_email(),
+            date_pattern_context: DatePatternContext::from(Local::now()),
+            default_ignored_remote: None,
+            use_glob_by_default: true,
+            extensions: &RevsetExtensions::default(),
+            workspace: Some(workspace_ctx),
+        };
+
+        f(&context)
+    }
+
+    fn resolve_single_commit(&self, revset_str: &str) -> Result<JjCommit, RepoError> {
+        let repo = self.repo.as_ref();
+
+        self.with_revset_context(|context| {
+            let mut diagnostics = RevsetDiagnostics::new();
+            let expression = jj_lib::revset::parse(&mut diagnostics, revset_str, context)
+                .map_err(|e| RepoError::InvalidRevision(format!("parse error: {}", e)))?;
+
+            let symbol_resolver =
+                SymbolResolver::new(repo, &([] as [&Box<dyn SymbolResolverExtension>; 0]));
+
+            let resolved = expression
+                .resolve_user_expression(repo, &symbol_resolver)
+                .map_err(|e| RepoError::InvalidRevision(format!("resolution error: {}", e)))?;
+
+            let revset = resolved
+                .evaluate(repo)
+                .map_err(|e| RepoError::JjError(format!("evaluation error: {}", e)))?;
+
+            let mut iter = revset.iter();
+            let commit_id = iter
+                .next()
+                .ok_or_else(|| {
+                    RepoError::InvalidRevision(format!("revision '{}' not found", revset_str))
+                })?
+                .map_err(|e| RepoError::JjError(format!("iterator error: {}", e)))?;
+
+            let commit = repo
+                .store()
+                .get_commit(&commit_id)
+                .map_err(|e| RepoError::JjError(format!("failed to load commit: {}", e)))?;
+
+            Ok(commit)
+        })
+    }
+
+    fn get_content_from_value(
+        &self,
+        repo: &dyn Repo,
+        path: &RepoPath,
+        value: &MergedTreeValue,
+    ) -> Result<Option<Vec<u8>>, RepoError> {
+        if let Some(resolved) = value.as_resolved() {
+            match resolved {
+                Some(TreeValue::File { id, .. }) => {
+                    let mut content = Vec::new();
+                    let mut reader =
+                        repo.store().read_file(path, id).block_on().map_err(|e| {
+                            RepoError::JjError(format!("failed to read file: {}", e))
+                        })?;
+
+                    async { reader.read_to_end(&mut content).await }
+                        .block_on()
+                        .map_err(|e| {
+                            RepoError::JjError(format!("failed to read content: {}", e))
+                        })?;
+
+                    Ok(Some(content))
+                }
+                None => Ok(None),
+                _ => Ok(None),
+            }
+        } else {
+            self.materialize_conflict(repo, path, value)
+        }
+    }
+
+    fn materialize_conflict(
+        &self,
+        repo: &dyn Repo,
+        path: &RepoPath,
+        value: &MergedTreeValue,
+    ) -> Result<Option<Vec<u8>>, RepoError> {
+        let file_conflict = try_materialize_file_conflict_value(repo.store(), path, value)
+            .block_on()
+            .map_err(|e| RepoError::JjError(format!("failed to materialize conflict: {}", e)))?;
+
+        match file_conflict {
+            Some(file) => {
+                let options = ConflictMaterializeOptions {
+                    marker_style: ConflictMarkerStyle::Git,
+                    marker_len: None,
+                    merge: MergeOptions {
+                        hunk_level: FileMergeHunkLevel::Line,
+                        same_change: SameChange::Accept,
+                    },
+                };
+
+                let content = materialize_merge_result_to_bytes(&file.contents, &options);
+                Ok(Some(content.as_slice().to_vec()))
+            }
+            None => Ok(Some(
+                b"<<<<<<< Conflict (non-file)\n(complex conflict - file vs non-file)\n>>>>>>>\n"
+                    .to_vec(),
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "jj")]
+fn jj_value_exists(value: &MergedTreeValue) -> bool {
+    match value.as_resolved() {
+        Some(resolved) => resolved.is_some(),
+        None => true,
+    }
+}
+
+#[cfg(feature = "jj")]
+fn list_changed_files_jj(root: &RepoRoot) -> Result<Vec<ChangedFile>, RepoError> {
+    let repo = JjRepo::open(root.path())?;
+    let wc_commit = repo.resolve_single_commit("@")?;
+    let repo_ref = repo.repo.as_ref();
+
+    let parent_tree = if wc_commit.parent_ids().is_empty() {
+        repo_ref.store().empty_merged_tree()
+    } else {
+        let parent_id = &wc_commit.parent_ids()[0];
+        let parent = repo_ref
+            .store()
+            .get_commit(parent_id)
+            .map_err(|e| RepoError::JjError(format!("failed to get parent: {}", e)))?;
+        parent.tree()
+    };
+
+    let wc_tree = wc_commit.tree();
+    let diff_stream = parent_tree.diff_stream(&wc_tree, &EverythingMatcher);
+    let entries: Vec<_> = async { diff_stream.collect().await }.block_on();
+
+    let mut files = Vec::new();
+
+    for entry in entries {
+        let diff = entry
+            .values
+            .map_err(|e| RepoError::JjError(format!("diff iteration error: {}", e)))?;
+
+        let path_str = entry.path.as_internal_file_string();
+
+        if path_str.is_empty()
+            || path_str.starts_with(".quickdiff/")
+            || path_str.starts_with(".jj/")
+        {
+            continue;
+        }
+
+        let before_exists = jj_value_exists(&diff.before);
+        let after_exists = jj_value_exists(&diff.after);
+
+        let kind = match (before_exists, after_exists) {
+            (false, true) => FileChangeKind::Added,
+            (true, false) => FileChangeKind::Deleted,
+            (true, true) => FileChangeKind::Modified,
+            (false, false) => continue,
+        };
+
+        files.push(ChangedFile::new(RelPath::new(path_str), kind));
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+#[cfg(feature = "jj")]
+fn list_changed_files_between_jj(
+    root: &RepoRoot,
+    from: &str,
+    to: &str,
+) -> Result<Vec<ChangedFile>, RepoError> {
+    let repo = JjRepo::open(root.path())?;
+    let from_commit = repo.resolve_single_commit(from)?;
+    let to_commit = repo.resolve_single_commit(to)?;
+
+    let from_tree = from_commit.tree();
+    let to_tree = to_commit.tree();
+
+    let diff_stream = from_tree.diff_stream(&to_tree, &EverythingMatcher);
+    let entries: Vec<_> = async { diff_stream.collect().await }.block_on();
+
+    let mut files = Vec::new();
+
+    for entry in entries {
+        let diff = entry
+            .values
+            .map_err(|e| RepoError::JjError(format!("diff iteration error: {}", e)))?;
+
+        let path_str = entry.path.as_internal_file_string();
+
+        if path_str.is_empty()
+            || path_str.starts_with(".quickdiff/")
+            || path_str.starts_with(".jj/")
+        {
+            continue;
+        }
+
+        let before_exists = jj_value_exists(&diff.before);
+        let after_exists = jj_value_exists(&diff.after);
+
+        let kind = match (before_exists, after_exists) {
+            (false, true) => FileChangeKind::Added,
+            (true, false) => FileChangeKind::Deleted,
+            (true, true) => FileChangeKind::Modified,
+            (false, false) => continue,
+        };
+
+        files.push(ChangedFile::new(RelPath::new(path_str), kind));
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+#[cfg(feature = "jj")]
+fn load_revision_content_jj(
+    root: &RepoRoot,
+    revision: &str,
+    path: &RelPath,
+) -> Result<Vec<u8>, RepoError> {
+    let repo = JjRepo::open(root.path())?;
+    let commit = repo.resolve_single_commit(revision)?;
+    let tree = commit.tree();
+
+    let repo_path = RepoPathBuf::from_internal_string(path.as_str().to_string())
+        .map_err(|e| RepoError::InvalidRevision(format!("invalid path: {}", e)))?;
+
+    let value = tree
+        .path_value(&repo_path)
+        .map_err(|e| RepoError::JjError(format!("failed to get path value: {}", e)))?;
+
+    let content = repo.get_content_from_value(repo.repo.as_ref(), &repo_path, &value)?;
+    let content = content.unwrap_or_default();
+
+    if content.len() as u64 > MAX_FILE_SIZE {
+        return Err(RepoError::FileTooLarge {
+            size: content.len() as u64,
+            max: MAX_FILE_SIZE,
+        });
+    }
+
+    Ok(content)
+}
+
+#[cfg(feature = "jj")]
+fn resolve_merge_base_jj(root: &RepoRoot, base: &str) -> Result<String, RepoError> {
+    let repo = JjRepo::open(root.path())?;
+    let revset = format!("heads(::({}) & ::({}))", base, root.working_copy_ref());
+    let commit = repo.resolve_single_commit(&revset)?;
+    Ok(commit.id().hex())
+}
+
+#[cfg(feature = "jj")]
+fn resolve_revision_jj(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
+    let repo = JjRepo::open(root.path())?;
+    let commit = repo.resolve_single_commit(revision)?;
+    Ok(commit.id().hex())
+}
+
+#[cfg(feature = "jj")]
+fn get_parent_revision_jj(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
+    let repo = JjRepo::open(root.path())?;
+    let commit = repo.resolve_single_commit(revision)?;
+
+    if commit.parent_ids().is_empty() {
+        return Ok("root()".to_string());
+    }
+
+    Ok(commit.parent_ids()[0].hex())
+}
+
+/// Validate that a git reference doesn't look like a flag (defense in depth).
+fn validate_git_ref_format(reference: &str) -> Result<(), RepoError> {
     let reference = reference.trim();
     if reference.starts_with('-') {
         return Err(RepoError::InvalidRevision(format!(
@@ -349,9 +828,20 @@ impl ChangedFile {
     }
 }
 
-/// List changed files in the working tree vs HEAD.
+/// List changed files in the working tree vs HEAD/@-.
 #[must_use = "this returns a Result that should be checked"]
 pub fn list_changed_files(root: &RepoRoot) -> Result<Vec<ChangedFile>, RepoError> {
+    if root.is_jj() {
+        #[cfg(feature = "jj")]
+        {
+            return list_changed_files_jj(root);
+        }
+        #[cfg(not(feature = "jj"))]
+        {
+            return Err(RepoError::JjError("jj support not enabled".to_string()));
+        }
+    }
+
     let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
 
     let mut opts = StatusOptions::new();
@@ -371,8 +861,8 @@ pub fn list_changed_files(root: &RepoRoot) -> Result<Vec<ChangedFile>, RepoError
             None => continue,
         };
 
-        // Skip .quickdiff/ internal files
-        if path.starts_with(".quickdiff/") {
+        // Skip internal files
+        if path.starts_with(".quickdiff/") || path.starts_with(".jj/") {
             continue;
         }
 
@@ -387,10 +877,7 @@ pub fn list_changed_files(root: &RepoRoot) -> Result<Vec<ChangedFile>, RepoError
                     diff_delta.new_file().path().and_then(|p| p.to_str()),
                 ) {
                     if old != new {
-                        files.push(ChangedFile::renamed(
-                            RelPath::new(old),
-                            RelPath::new(new),
-                        ));
+                        files.push(ChangedFile::renamed(RelPath::new(old), RelPath::new(new)));
                         continue;
                     }
                 }
@@ -453,7 +940,11 @@ fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
             s if s.starts_with('R') || s.starts_with('C') => {
                 // Rename/Copy: next entry is the old/original path
                 if let Some(old) = parts.next() {
-                    if path.starts_with(".quickdiff/") || old.starts_with(".quickdiff/") {
+                    if path.starts_with(".quickdiff/")
+                        || path.starts_with(".jj/")
+                        || old.starts_with(".quickdiff/")
+                        || old.starts_with(".jj/")
+                    {
                         continue;
                     }
                     files.push(ChangedFile::renamed(RelPath::new(old), RelPath::new(path)));
@@ -464,8 +955,8 @@ fn parse_porcelain_status(output: &[u8]) -> Result<Vec<ChangedFile>, RepoError> 
             _ => FileChangeKind::Modified, // fallback
         };
 
-        // Skip .quickdiff/ internal files
-        if path.starts_with(".quickdiff/") {
+        // Skip internal files
+        if path.starts_with(".quickdiff/") || path.starts_with(".jj/") {
             continue;
         }
 
@@ -494,6 +985,10 @@ fn get_blob_size(
 /// Returns error if file exceeds `MAX_FILE_SIZE`.
 #[must_use = "this returns a Result that should be checked"]
 pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, RepoError> {
+    if root.is_jj() {
+        return load_revision_content(root, root.working_copy_parent_ref(), path);
+    }
+
     let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
 
     let blob = match lookup_blob(&repo, "HEAD", path)? {
@@ -544,7 +1039,7 @@ pub fn load_working_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, 
     }
 }
 
-/// Load content from a specific git revision.
+/// Load content from a specific revision.
 /// Returns error if file exceeds `MAX_FILE_SIZE`.
 #[must_use = "this returns a Result that should be checked"]
 pub fn load_revision_content(
@@ -552,7 +1047,18 @@ pub fn load_revision_content(
     revision: &str,
     path: &RelPath,
 ) -> Result<Vec<u8>, RepoError> {
-    validate_ref_format(revision)?;
+    if root.is_jj() {
+        #[cfg(feature = "jj")]
+        {
+            return load_revision_content_jj(root, revision, path);
+        }
+        #[cfg(not(feature = "jj"))]
+        {
+            return Err(RepoError::JjError("jj support not enabled".to_string()));
+        }
+    }
+
+    validate_git_ref_format(revision)?;
 
     let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
 
@@ -573,11 +1079,22 @@ pub fn load_revision_content(
     Ok(blob.content().to_vec())
 }
 
-/// Resolve the merge-base between a base ref and HEAD.
+/// Resolve the merge-base between a base ref and the current commit.
 #[must_use = "this returns a Result that should be checked"]
 pub fn resolve_merge_base(root: &RepoRoot, base: &str) -> Result<String, RepoError> {
     let base = base.trim();
-    validate_ref_format(base)?;
+    if root.is_jj() {
+        #[cfg(feature = "jj")]
+        {
+            return resolve_merge_base_jj(root, base);
+        }
+        #[cfg(not(feature = "jj"))]
+        {
+            return Err(RepoError::JjError("jj support not enabled".to_string()));
+        }
+    }
+
+    validate_git_ref_format(base)?;
 
     let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
 
@@ -694,11 +1211,22 @@ pub fn load_diff_contents(
     }
 }
 
-/// Resolve a revision to its full SHA.
+/// Resolve a revision to its full commit id.
 #[must_use = "this returns a Result that should be checked"]
 pub fn resolve_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
     let revision = revision.trim();
-    validate_ref_format(revision)?;
+    if root.is_jj() {
+        #[cfg(feature = "jj")]
+        {
+            return resolve_revision_jj(root, revision);
+        }
+        #[cfg(not(feature = "jj"))]
+        {
+            return Err(RepoError::JjError("jj support not enabled".to_string()));
+        }
+    }
+
+    validate_git_ref_format(revision)?;
 
     let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
     let obj = repo
@@ -720,7 +1248,18 @@ const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 #[must_use = "this returns a Result that should be checked"]
 pub fn get_parent_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoError> {
     let revision = revision.trim();
-    validate_ref_format(revision)?;
+    if root.is_jj() {
+        #[cfg(feature = "jj")]
+        {
+            return get_parent_revision_jj(root, revision);
+        }
+        #[cfg(not(feature = "jj"))]
+        {
+            return Err(RepoError::JjError("jj support not enabled".to_string()));
+        }
+    }
+
+    validate_git_ref_format(revision)?;
 
     let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
     let obj = repo
@@ -731,7 +1270,8 @@ pub fn get_parent_revision(root: &RepoRoot, revision: &str) -> Result<String, Re
         .map_err(|_| RepoError::InvalidRevision(revision.to_string()))?;
 
     if commit.parent_count() > 0 {
-        Ok(commit.parent_id(0)
+        Ok(commit
+            .parent_id(0)
             .map_err(|e| RepoError::GitError(format!("failed to get parent: {}", e)))?
             .to_string())
     } else {
@@ -747,8 +1287,19 @@ pub fn list_changed_files_between(
     from: &str,
     to: &str,
 ) -> Result<Vec<ChangedFile>, RepoError> {
-    validate_ref_format(from)?;
-    validate_ref_format(to)?;
+    if root.is_jj() {
+        #[cfg(feature = "jj")]
+        {
+            return list_changed_files_between_jj(root, from, to);
+        }
+        #[cfg(not(feature = "jj"))]
+        {
+            return Err(RepoError::JjError("jj support not enabled".to_string()));
+        }
+    }
+
+    validate_git_ref_format(from)?;
+    validate_git_ref_format(to)?;
 
     let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
 
@@ -787,10 +1338,7 @@ pub fn list_changed_files_between(
             .path()
             .and_then(|p| p.to_str())
             .unwrap_or("");
-        let old_path = delta
-            .old_file()
-            .path()
-            .and_then(|p| p.to_str());
+        let old_path = delta.old_file().path().and_then(|p| p.to_str());
 
         if new_path.is_empty() {
             continue;
@@ -948,6 +1496,21 @@ pub fn diff_source_display(source: &DiffSource, root: &RepoRoot) -> String {
     match source {
         DiffSource::WorkingTree => "Working Tree".to_string(),
         DiffSource::Commit(c) => {
+            if root.is_jj() {
+                #[cfg(feature = "jj")]
+                {
+                    if let Ok(repo) = JjRepo::open(root.path()) {
+                        if let Ok(commit) = repo.resolve_single_commit(c) {
+                            let change_id = commit.change_id().hex();
+                            let summary = commit.description().lines().next().unwrap_or("");
+                            let msg = format!("{} {}", take_chars(&change_id, 8), summary);
+                            return truncate_chars(&msg, 50);
+                        }
+                    }
+                }
+                return format!("Commit {}", take_chars(c, 7));
+            }
+
             // Try to get short commit message using git2
             if let Ok(repo) = Repository::open(root.path()) {
                 if let Ok(obj) = repo.revparse_single(c) {
@@ -974,6 +1537,15 @@ pub fn diff_source_display(source: &DiffSource, root: &RepoRoot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "jj")]
+    use std::fs;
+    #[cfg(feature = "jj")]
+    use std::path::Path;
+    #[cfg(feature = "jj")]
+    use std::process::Command;
+    #[cfg(feature = "jj")]
+    use tempfile::TempDir;
 
     #[test]
     fn relpath_basics() {
@@ -1082,5 +1654,117 @@ mod tests {
         assert_eq!(take_chars("日本語", 2), "日本");
         assert_eq!(take_chars("🎉🎊🎁", 2), "🎉🎊");
         assert_eq!(take_chars("short", 100), "short"); // no panic on over-take
+    }
+
+    #[cfg(feature = "jj")]
+    fn jj_available() -> bool {
+        Command::new("jj")
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(feature = "jj")]
+    fn jj(dir: &Path, args: &[&str]) -> bool {
+        Command::new("jj")
+            .current_dir(dir)
+            .args(args)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(feature = "jj")]
+    struct JjRepoGuard {
+        dir: TempDir,
+    }
+
+    #[cfg(feature = "jj")]
+    impl JjRepoGuard {
+        fn new() -> Option<Self> {
+            if !jj_available() {
+                return None;
+            }
+
+            let dir = TempDir::new().ok()?;
+            if !jj(dir.path(), &["git", "init"]) {
+                return None;
+            }
+
+            jj(
+                dir.path(),
+                &["config", "set", "--repo", "user.email", "test@example.com"],
+            );
+            jj(
+                dir.path(),
+                &["config", "set", "--repo", "user.name", "Test User"],
+            );
+
+            fs::write(dir.path().join("README.md"), "hello\n").ok()?;
+            jj(dir.path(), &["status"]);
+
+            Some(Self { dir })
+        }
+
+        fn path(&self) -> &Path {
+            self.dir.path()
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "jj")]
+    fn jj_repo_root_discovery() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        let root = RepoRoot::discover(repo.path()).expect("should discover jj repo");
+        assert!(root.is_jj());
+    }
+
+    #[test]
+    #[cfg(feature = "jj")]
+    fn jj_list_changed_files_includes_readme() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        let root = RepoRoot::discover(repo.path()).expect("should discover jj repo");
+        let files = list_changed_files(&root).expect("list_changed_files should succeed");
+
+        assert!(files.iter().any(|f| f.path.as_str() == "README.md"));
+    }
+
+    #[test]
+    #[cfg(feature = "jj")]
+    fn jj_load_revision_content_reads_file() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        let root = RepoRoot::discover(repo.path()).expect("should discover jj repo");
+        let content = load_revision_content(&root, "@", &RelPath::new("README.md"))
+            .expect("load_revision_content should succeed");
+
+        assert_eq!(content, b"hello\n");
+    }
+
+    #[test]
+    #[cfg(feature = "jj")]
+    fn jj_resolve_revision_returns_hex_id() {
+        let Some(repo) = JjRepoGuard::new() else {
+            eprintln!("Skipping test: jj not available");
+            return;
+        };
+
+        let root = RepoRoot::discover(repo.path()).expect("should discover jj repo");
+        let revision = resolve_revision(&root, "@").expect("resolve_revision should succeed");
+
+        assert!(!revision.is_empty());
+        assert!(revision.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }
