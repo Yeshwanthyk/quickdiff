@@ -383,10 +383,13 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
             ("  ".to_string(), app.theme.text_faint)
         };
 
-        // Ellipsize path
+        // Ellipsize path (char-safe for UTF-8)
         let path = file.path.as_str();
-        let display_path = if path.len() > SIDEBAR_PATH_WIDTH {
-            format!("…{}", &path[path.len() - SIDEBAR_PATH_WIDTH + 1..])
+        let char_count = path.chars().count();
+        let display_path = if char_count > SIDEBAR_PATH_WIDTH {
+            let skip = char_count - SIDEBAR_PATH_WIDTH + 1;
+            let truncated: String = path.chars().skip(skip).collect();
+            format!("…{}", truncated)
         } else {
             path.to_string()
         };
@@ -1644,7 +1647,7 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
 // PR Picker Overlay
 // ============================================================================
 
-fn render_pr_picker_overlay(frame: &mut Frame, app: &App) {
+fn render_pr_picker_overlay(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Center the picker
@@ -1711,6 +1714,16 @@ fn render_pr_picker_overlay(frame: &mut Frame, app: &App) {
     } else {
         // Render PR list
         let visible_height = list_area.height as usize;
+
+        // Keep selection visible (mirror sidebar scroll logic)
+        let max_scroll = app.pr_list.len().saturating_sub(visible_height);
+        app.pr_picker_scroll = app.pr_picker_scroll.min(max_scroll);
+        if app.pr_picker_selected < app.pr_picker_scroll {
+            app.pr_picker_scroll = app.pr_picker_selected;
+        } else if app.pr_picker_selected >= app.pr_picker_scroll + visible_height {
+            app.pr_picker_scroll = app.pr_picker_selected + 1 - visible_height;
+        }
+
         let start = app.pr_picker_scroll;
         let end = (start + visible_height).min(app.pr_list.len());
 
@@ -1777,10 +1790,14 @@ fn styled_filter_tab<'a>(label: &'a str, active: bool, theme: &Theme) -> Span<'a
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    let char_count = s.chars().count();
+    if char_count <= max_len {
         s.to_string()
+    } else if max_len == 0 {
+        String::new()
     } else {
-        format!("{}…", &s[..max_len - 1])
+        let truncated: String = s.chars().take(max_len - 1).collect();
+        format!("{}…", truncated)
     }
 }
 
@@ -1790,10 +1807,13 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 
 fn render_pr_action_overlay(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let width = 60.min(area.width - 4);
-    let height = 10;
-    let x = (area.width - width) / 2;
-    let y = (area.height - height) / 2;
+    let width = 60.min(area.width.saturating_sub(4));
+    let height = 10.min(area.height.saturating_sub(2));
+    if width < 20 || height < 5 {
+        return; // Terminal too small
+    }
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
     let action_area = Rect::new(x, y, width, height);
 
     let title = match app.pr_action_type {
