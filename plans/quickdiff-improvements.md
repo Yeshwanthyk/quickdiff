@@ -18,24 +18,26 @@ Scope: address all findings from the review, keeping behavior consistent and avo
   - Use cached per-line spans so multi-line constructs highlight correctly.
   - Invalidate cache when file selection changes or diff reloads.
 
-- [ ] 4) PR picker scroll correctness
+- [x] 4) PR picker scroll correctness
   - Update pr_picker_scroll in pr_picker_next/pr_picker_prev to keep selection visible.
   - Mirror sidebar scroll logic for consistent UX.
 
-- [ ] 5) CLI path validation
+- [x] 5) CLI path validation
   - Replace RelPath::new with RelPath::try_new in comments CLI.
   - Return user-friendly errors on absolute/invalid paths.
 
-- [ ] 6) Event loop responsiveness
-  - Add an event queue and process all pending events per tick.
-  - Coalesce consecutive scroll events to avoid excessive redraws/requests.
+- [x] 6) Event loop responsiveness
+  - Drain all pending events per tick to reduce poll() syscalls.
+  - Process events in batch before redraw.
 
-- [ ] 7) UI safety and correctness polish
-  - Use char-safe truncation for sidebar paths.
+- [x] 7) UI safety and correctness polish
+  - Use char-safe truncation for sidebar paths and PR picker strings.
   - Use saturating math for PR action overlay sizing on tiny terminals.
+  - Early return when terminal too small for overlay.
 
-- [ ] 8) Tests for patch extraction
+- [x] 8) Tests for patch extraction
   - Add unit tests covering multi-hunk patches, rename headers, and empty hunks.
+  - Tests for add-only and delete-only patches.
 
 Notes
 - Lumen patterns used: FileHighlighter (multi-line aware) and event coalescing.
