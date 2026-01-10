@@ -255,7 +255,13 @@ fn cmd_list(repo: &RepoRoot, args: &[String]) -> ExitCode {
     };
 
     let mut comments: Vec<_> = if let Some(ref path) = filter_path {
-        let rel_path = RelPath::new(path.clone());
+        let rel_path = match RelPath::try_new(path.clone()) {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("Invalid path: must be relative (not absolute): {}", path);
+                return ExitCode::from(1);
+            }
+        };
         store.list_for_path(&rel_path, include_resolved)
     } else {
         store.list(include_resolved)
@@ -426,7 +432,13 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     };
 
-    let rel_path = RelPath::new(path);
+    let rel_path = match RelPath::try_new(&path) {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("Invalid path: must be relative (not absolute): {}", path);
+            return ExitCode::from(1);
+        }
+    };
 
     let (files, merge_base) = match list_files_for_source(repo, &source) {
         Ok(v) => v,
