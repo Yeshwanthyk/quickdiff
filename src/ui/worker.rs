@@ -75,11 +75,8 @@ fn worker_loop(
     request_rx: Receiver<DiffLoadRequest>,
     response_tx: Sender<DiffLoadResponse>,
 ) {
-    while let Ok(mut req) = request_rx.recv() {
-        // Drain queued requests so we always work on the latest selection.
-        while let Ok(next) = request_rx.try_recv() {
-            req = next;
-        }
+    while let Ok(req) = request_rx.recv() {
+        let req = drain_latest_request(req, &request_rx);
 
         let id = req.id;
         let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -100,6 +97,16 @@ fn worker_loop(
         };
         let _ = response_tx.send(response);
     }
+}
+
+fn drain_latest_request(
+    mut req: DiffLoadRequest,
+    request_rx: &Receiver<DiffLoadRequest>,
+) -> DiffLoadRequest {
+    while let Ok(next) = request_rx.try_recv() {
+        req = next;
+    }
+    req
 }
 
 fn compute_diff_payload(repo: &RepoRoot, req: DiffLoadRequest) -> DiffLoadResponse {
@@ -137,5 +144,37 @@ fn compute_diff_payload(repo: &RepoRoot, req: DiffLoadRequest) -> DiffLoadRespon
         new_buffer,
         diff,
         is_binary,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    fn make_request(id: u64) -> DiffLoadRequest {
+        DiffLoadRequest {
+            id,
+            source: DiffSource::WorkingTree,
+            cached_merge_base: None,
+            file: ChangedFile::new(
+                crate::core::RelPath::new("src/main.rs"),
+                crate::core::FileChangeKind::Modified,
+            ),
+        }
+    }
+
+    #[test]
+    fn drain_latest_request_coalesces() {
+        let (tx, rx) = mpsc::channel();
+
+        tx.send(make_request(1)).unwrap();
+        tx.send(make_request(2)).unwrap();
+        tx.send(make_request(3)).unwrap();
+
+        let first = rx.recv().unwrap();
+        let latest = drain_latest_request(first, &rx);
+
+        assert_eq!(latest.id, 3);
     }
 }

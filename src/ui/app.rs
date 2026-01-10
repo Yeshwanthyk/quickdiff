@@ -5,6 +5,7 @@ use std::{
     env,
     io::{self, Write},
     process::Command,
+    sync::mpsc::TrySendError,
 };
 
 use crate::core::{
@@ -123,6 +124,7 @@ pub struct App {
     worker: DiffWorker,
     next_request_id: u64,
     pending_request_id: Option<u64>,
+    queued_request: Option<DiffLoadRequest>,
     /// Whether a diff is currently being loaded.
     pub loading: bool,
 
@@ -320,6 +322,7 @@ impl App {
             worker,
             next_request_id: 1,
             pending_request_id: None,
+            queued_request: None,
             loading: false,
             diff: None,
             old_buffer: None,
@@ -460,6 +463,7 @@ impl App {
             self.old_buffer = None;
             self.new_buffer = None;
             self.pending_request_id = None;
+            self.queued_request = None;
             self.loading = false;
             return;
         };
@@ -493,17 +497,7 @@ impl App {
             file: file.clone(),
         };
 
-        let send_failed = self
-            .worker
-            .request_tx
-            .as_ref()
-            .map(|tx| tx.send(req).is_err())
-            .unwrap_or(true);
-        if send_failed {
-            self.error_msg = Some("Diff worker stopped".to_string());
-            self.loading = false;
-            self.pending_request_id = None;
-            self.dirty = true;
+        if !self.enqueue_diff_request(req) {
             return;
         }
 
@@ -512,6 +506,44 @@ impl App {
             self.viewed
                 .set_last_selected(Some(file.path.as_str().to_string()));
         }
+    }
+
+    fn enqueue_diff_request(&mut self, req: DiffLoadRequest) -> bool {
+        let Some(tx) = self.worker.request_tx.as_ref() else {
+            self.error_msg = Some("Diff worker stopped".to_string());
+            self.loading = false;
+            self.pending_request_id = None;
+            self.queued_request = None;
+            self.dirty = true;
+            return false;
+        };
+
+        match tx.try_send(req) {
+            Ok(()) => {
+                self.queued_request = None;
+                true
+            }
+            Err(TrySendError::Full(req)) => {
+                self.queued_request = Some(req);
+                true
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.error_msg = Some("Diff worker stopped".to_string());
+                self.loading = false;
+                self.pending_request_id = None;
+                self.queued_request = None;
+                self.dirty = true;
+                false
+            }
+        }
+    }
+
+    fn flush_queued_diff_request(&mut self) {
+        let Some(req) = self.queued_request.take() else {
+            return;
+        };
+
+        self.enqueue_diff_request(req);
     }
 
     /// Apply any completed diff loads.
@@ -575,6 +607,8 @@ impl App {
                 }
             }
         }
+
+        self.flush_queued_diff_request();
     }
 
     /// Move selection up in sidebar.
