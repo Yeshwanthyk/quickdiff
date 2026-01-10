@@ -2114,3 +2114,90 @@ fn extract_content_from_patch(patch: &str) -> (String, String) {
 
     (old_lines.join("\n"), new_lines.join("\n"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_content_from_patch_simple() {
+        let patch = r#"@@ -1,3 +1,3 @@
+ line1
+-line2
++modified2
+ line3"#;
+
+        let (old, new) = extract_content_from_patch(patch);
+        assert_eq!(old, "line1\nline2\nline3");
+        assert_eq!(new, "line1\nmodified2\nline3");
+    }
+
+    #[test]
+    fn test_extract_content_from_patch_multi_hunk() {
+        let patch = r#"@@ -1,2 +1,2 @@
+ header
+-old_first
++new_first
+@@ -10,2 +10,2 @@
+ middle
+-old_second
++new_second"#;
+
+        let (old, new) = extract_content_from_patch(patch);
+        assert_eq!(old, "header\nold_first\nmiddle\nold_second");
+        assert_eq!(new, "header\nnew_first\nmiddle\nnew_second");
+    }
+
+    #[test]
+    fn test_extract_content_from_patch_with_rename_header() {
+        // Rename patches have extra header lines before the hunk
+        let patch = r#"diff --git a/old.rs b/new.rs
+similarity index 95%
+rename from old.rs
+rename to new.rs
+--- a/old.rs
++++ b/new.rs
+@@ -1,2 +1,2 @@
+ content
+-old
++new"#;
+
+        let (old, new) = extract_content_from_patch(patch);
+        assert_eq!(old, "content\nold");
+        assert_eq!(new, "content\nnew");
+    }
+
+    #[test]
+    fn test_extract_content_from_patch_empty() {
+        // Empty patch (no hunks)
+        let patch = r#"diff --git a/file.rs b/file.rs
+--- a/file.rs
++++ b/file.rs"#;
+
+        let (old, new) = extract_content_from_patch(patch);
+        assert_eq!(old, "");
+        assert_eq!(new, "");
+    }
+
+    #[test]
+    fn test_extract_content_from_patch_add_only() {
+        let patch = r#"@@ -0,0 +1,2 @@
++new line 1
++new line 2"#;
+
+        let (old, new) = extract_content_from_patch(patch);
+        assert_eq!(old, "");
+        assert_eq!(new, "new line 1\nnew line 2");
+    }
+
+    #[test]
+    fn test_extract_content_from_patch_delete_only() {
+        let patch = r#"@@ -1,2 +0,0 @@
+-deleted line 1
+-deleted line 2"#;
+
+        let (old, new) = extract_content_from_patch(patch);
+        assert_eq!(old, "deleted line 1\ndeleted line 2");
+        assert_eq!(new, "");
+    }
+}
