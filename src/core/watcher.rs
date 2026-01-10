@@ -27,7 +27,7 @@ pub struct RepoWatcher {
 impl RepoWatcher {
     /// Create a new watcher for the given repository root.
     ///
-    /// Watches recursively, excluding `.git/` and `.quickdiff/` directories.
+    /// Watches recursively, excluding `.git/`, `.jj/`, and `.quickdiff/` directories.
     /// Events are debounced (200ms window) and coalesced into `WatchEvent::Changed`.
     pub fn new(root: &RepoRoot) -> Result<Self, notify::Error> {
         let (tx, rx) = mpsc::channel();
@@ -38,7 +38,7 @@ impl RepoWatcher {
             Duration::from_millis(200),
             move |res: DebounceEventResult| {
                 if let Ok(events) = res {
-                    // Filter out .git/ and .quickdiff/ events
+                    // Filter out .git/, .jj/, and .quickdiff/ events
                     let relevant = events.iter().any(|e| !is_ignored_path(&e.path, &repo_path));
 
                     if relevant {
@@ -88,7 +88,7 @@ fn is_ignored_path(path: &Path, repo_root: &Path) -> bool {
     for component in rel.components() {
         if let std::path::Component::Normal(name) = component {
             let name = name.to_string_lossy();
-            if name == ".git" || name == ".quickdiff" {
+            if name == ".git" || name == ".jj" || name == ".quickdiff" {
                 return true;
             }
         }
@@ -109,6 +109,7 @@ mod tests {
         // Should ignore
         assert!(is_ignored_path(Path::new("/repo/.git/objects/abc"), &root));
         assert!(is_ignored_path(Path::new("/repo/.git/HEAD"), &root));
+        assert!(is_ignored_path(Path::new("/repo/.jj/store/abc"), &root));
         assert!(is_ignored_path(
             Path::new("/repo/.quickdiff/state.json"),
             &root
