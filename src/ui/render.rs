@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use crate::core::{ChangeKind, CommentStatus, FileChangeKind, InlineSpan, ViewedStore};
-use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId};
+use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId, StyledSpan};
 use crate::theme::Theme;
 
 use super::app::{App, DiffPaneMode, Focus, Mode, PRActionType};
@@ -794,7 +794,8 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             }
         };
 
-        let line_num = line_ref.map(|l| l.line_num + 1);
+        let line_idx = line_ref.map(|l| l.line_num);
+        let line_num = line_idx.map(|n| n + 1);
         let content = line_ref.map(|l| l.content.as_str()).unwrap_or("");
         let inline_spans = line_ref.and_then(|l| l.inline_spans.as_ref());
 
@@ -807,7 +808,23 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         let mut visible_len = 0usize;
 
         if !content.is_empty() && max_content > 0 {
-            let hl_spans = app.highlighter.highlight(app.current_lang, content);
+            let default_span = StyledSpan {
+                start: 0,
+                end: content.len(),
+                style_id: StyleId::Default,
+            };
+
+            let cached_spans = match (is_old, line_idx) {
+                (true, Some(idx)) => app.old_highlights.line_spans(idx),
+                (false, Some(idx)) => app.new_highlights.line_spans(idx),
+                _ => None,
+            };
+
+            let hl_spans = match cached_spans {
+                Some(spans) if !spans.is_empty() => spans,
+                _ => std::slice::from_ref(&default_span),
+            };
+
             let scroll_x = app.scroll_x;
             let mut col_pos = 0usize;
 

@@ -15,7 +15,7 @@ use crate::core::{
     CommentStore, DiffResult, DiffSource, FileCommentStore, FileViewedStore, FuzzyMatcher, RelPath,
     RepoRoot, RepoWatcher, Selector, TextBuffer, ViewedStore,
 };
-use crate::highlight::{query_scopes, HighlighterCache, LanguageId, ScopeInfo};
+use crate::highlight::{query_scopes, FileHighlightCache, HighlighterCache, LanguageId, ScopeInfo};
 use crate::theme::Theme;
 
 use arboard::Clipboard;
@@ -176,6 +176,10 @@ pub struct App {
     // Highlighting
     /// Syntax highlighter cache.
     pub highlighter: HighlighterCache,
+    /// Cached per-line highlights for the old pane.
+    pub old_highlights: FileHighlightCache,
+    /// Cached per-line highlights for the new pane.
+    pub new_highlights: FileHighlightCache,
     /// Current file's language.
     pub current_lang: LanguageId,
 
@@ -354,6 +358,8 @@ impl App {
             status_msg: None,
             dirty: true,
             highlighter: HighlighterCache::new(),
+            old_highlights: FileHighlightCache::new(),
+            new_highlights: FileHighlightCache::new(),
             current_lang: LanguageId::Plain,
             old_scopes: Vec::new(),
             new_scopes: Vec::new(),
@@ -480,6 +486,8 @@ impl App {
             self.new_buffer = None;
             self.pending_request_id = None;
             self.queued_request = None;
+            self.old_highlights.clear();
+            self.new_highlights.clear();
             self.loading = false;
             return;
         };
@@ -497,6 +505,8 @@ impl App {
         self.new_buffer = None;
         self.old_scopes.clear();
         self.new_scopes.clear();
+        self.old_highlights.clear();
+        self.new_highlights.clear();
         self.scroll_y = 0;
         self.scroll_x = 0;
 
@@ -623,11 +633,17 @@ impl App {
                         let lang = self.current_lang;
                         let old_str = String::from_utf8_lossy(old_buffer.as_bytes());
                         let new_str = String::from_utf8_lossy(new_buffer.as_bytes());
-                        self.old_scopes = query_scopes(lang, &old_str);
-                        self.new_scopes = query_scopes(lang, &new_str);
+                        self.old_scopes = query_scopes(lang, old_str.as_ref());
+                        self.new_scopes = query_scopes(lang, new_str.as_ref());
+                        self.old_highlights
+                            .compute(&self.highlighter, lang, old_str.as_ref());
+                        self.new_highlights
+                            .compute(&self.highlighter, lang, new_str.as_ref());
                     } else {
                         self.old_scopes.clear();
                         self.new_scopes.clear();
+                        self.old_highlights.clear();
+                        self.new_highlights.clear();
                     }
 
                     self.refresh_current_file_comment_markers();
@@ -643,6 +659,8 @@ impl App {
                     self.diff = None;
                     self.old_buffer = None;
                     self.new_buffer = None;
+                    self.old_highlights.clear();
+                    self.new_highlights.clear();
                     self.commented_hunks.clear();
                     self.error_msg = Some(format!("Failed to load diff: {}", message));
                     self.dirty = true;
@@ -1810,6 +1828,10 @@ impl App {
         self.diff = None;
         self.old_buffer = None;
         self.new_buffer = None;
+        self.old_scopes.clear();
+        self.new_scopes.clear();
+        self.old_highlights.clear();
+        self.new_highlights.clear();
         self.is_binary = false;
         self.scroll_y = 0;
         self.scroll_x = 0;
@@ -1848,6 +1870,11 @@ impl App {
             .map(crate::highlight::LanguageId::from_extension)
             .unwrap_or(crate::highlight::LanguageId::Plain);
 
+        self.old_scopes.clear();
+        self.new_scopes.clear();
+        self.old_highlights.clear();
+        self.new_highlights.clear();
+
         // For PR mode, we use the patch directly
         // Create synthetic old/new buffers from the patch
         let (old_content, new_content) = extract_content_from_patch(&pr_file.patch);
@@ -1861,6 +1888,23 @@ impl App {
         } else {
             Some(DiffResult::compute(&old_buffer, &new_buffer))
         };
+
+        if !is_binary {
+            let lang = self.current_lang;
+            let old_str = String::from_utf8_lossy(old_buffer.as_bytes());
+            let new_str = String::from_utf8_lossy(new_buffer.as_bytes());
+            self.old_scopes = query_scopes(lang, old_str.as_ref());
+            self.new_scopes = query_scopes(lang, new_str.as_ref());
+            self.old_highlights
+                .compute(&self.highlighter, lang, old_str.as_ref());
+            self.new_highlights
+                .compute(&self.highlighter, lang, new_str.as_ref());
+        } else {
+            self.old_scopes.clear();
+            self.new_scopes.clear();
+            self.old_highlights.clear();
+            self.new_highlights.clear();
+        }
 
         self.is_binary = is_binary;
         self.old_buffer = Some(old_buffer);

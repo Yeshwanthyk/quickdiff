@@ -12,7 +12,7 @@ Scope: address all findings from the review, keeping behavior consistent and avo
   - Update App to set pr_loading immediately and apply worker responses asynchronously.
   - Ensure UI stays responsive during gh operations and error state is surfaced.
 
-- [ ] 3) File-level highlight caching (Lumen-style)
+- [x] 3) File-level highlight caching (Lumen-style)
   - Add a FileHighlighter-like cache in quickdiff highlight module.
   - Compute highlights once per loaded file (on diff load) and reuse in render.
   - Use cached per-line spans so multi-line constructs highlight correctly.

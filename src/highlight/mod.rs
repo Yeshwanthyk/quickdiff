@@ -540,6 +540,168 @@ impl HighlighterCache {
     }
 }
 
+/// Cached per-line highlights for a single file.
+pub struct FileHighlightCache {
+    line_spans: Vec<Vec<StyledSpan>>,
+}
+
+impl Default for FileHighlightCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FileHighlightCache {
+    /// Create an empty cache.
+    pub fn new() -> Self {
+        Self {
+            line_spans: Vec::new(),
+        }
+    }
+
+    /// Clear cached spans.
+    pub fn clear(&mut self) {
+        self.line_spans.clear();
+    }
+
+    /// Compute and cache highlights for an entire source file.
+    pub fn compute(&mut self, highlighters: &HighlighterCache, lang: LanguageId, source: &str) {
+        self.line_spans = build_line_spans(highlighters, lang, source);
+    }
+
+    /// Get cached spans for a line (0-indexed).
+    pub fn line_spans(&self, line_num: usize) -> Option<&[StyledSpan]> {
+        self.line_spans.get(line_num).map(|spans| spans.as_slice())
+    }
+}
+
+fn build_line_spans(
+    highlighters: &HighlighterCache,
+    lang: LanguageId,
+    source: &str,
+) -> Vec<Vec<StyledSpan>> {
+    let bounds = compute_line_bounds(source);
+    if bounds.is_empty() {
+        return Vec::new();
+    }
+
+    let spans = highlighters.highlight(lang, source);
+    let mut per_line = split_spans_by_line(&spans, &bounds);
+
+    for (idx, spans) in per_line.iter_mut().enumerate() {
+        let line_len = bounds[idx].1 - bounds[idx].0;
+        let filled = fill_line_gaps(std::mem::take(spans), line_len);
+        *spans = filled;
+    }
+
+    per_line
+}
+
+fn compute_line_bounds(source: &str) -> Vec<(usize, usize)> {
+    if source.is_empty() {
+        return Vec::new();
+    }
+
+    let mut bounds = Vec::new();
+    let mut start = 0;
+
+    for (idx, byte) in source.as_bytes().iter().enumerate() {
+        if *byte == b'\n' {
+            bounds.push((start, idx));
+            start = idx + 1;
+        }
+    }
+
+    if start < source.len() {
+        bounds.push((start, source.len()));
+    }
+
+    bounds
+}
+
+fn split_spans_by_line(spans: &[StyledSpan], bounds: &[(usize, usize)]) -> Vec<Vec<StyledSpan>> {
+    let mut per_line = vec![Vec::new(); bounds.len()];
+
+    for span in spans {
+        if span.start >= span.end {
+            continue;
+        }
+
+        let mut idx = bounds.partition_point(|(_, end)| *end <= span.start);
+        while idx < bounds.len() {
+            let (line_start, line_end) = bounds[idx];
+            if span.start >= line_end {
+                idx += 1;
+                continue;
+            }
+            if span.end <= line_start {
+                break;
+            }
+
+            let clipped_start = span.start.max(line_start);
+            let clipped_end = span.end.min(line_end);
+            if clipped_start < clipped_end {
+                per_line[idx].push(StyledSpan {
+                    start: clipped_start - line_start,
+                    end: clipped_end - line_start,
+                    style_id: span.style_id,
+                });
+            }
+
+            if span.end <= line_end {
+                break;
+            }
+
+            idx += 1;
+        }
+    }
+
+    per_line
+}
+
+fn fill_line_gaps(spans: Vec<StyledSpan>, line_len: usize) -> Vec<StyledSpan> {
+    if line_len == 0 {
+        return spans;
+    }
+
+    if spans.is_empty() {
+        return vec![StyledSpan {
+            start: 0,
+            end: line_len,
+            style_id: StyleId::Default,
+        }];
+    }
+
+    let mut filled = Vec::with_capacity(spans.len() + 1);
+    let mut cursor = 0;
+
+    for span in spans {
+        if span.start > cursor {
+            filled.push(StyledSpan {
+                start: cursor,
+                end: span.start,
+                style_id: StyleId::Default,
+            });
+        }
+
+        if span.end > cursor {
+            let span_end = span.end;
+            filled.push(span);
+            cursor = span_end;
+        }
+    }
+
+    if cursor < line_len {
+        filled.push(StyledSpan {
+            start: cursor,
+            end: line_len,
+            style_id: StyleId::Default,
+        });
+    }
+
+    filled
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,6 +832,34 @@ class Foo {
         assert!(
             has_styled || !spans.is_empty(),
             "Expected some highlight output"
+        );
+    }
+
+    #[test]
+    fn file_highlight_cache_plain_splits_lines() {
+        let cache = HighlighterCache::new();
+        let mut file_cache = FileHighlightCache::new();
+
+        file_cache.compute(&cache, LanguageId::Plain, "alpha\nbeta");
+
+        let first = file_cache.line_spans(0).unwrap();
+        assert_eq!(
+            first,
+            &[StyledSpan {
+                start: 0,
+                end: 5,
+                style_id: StyleId::Default,
+            }]
+        );
+
+        let second = file_cache.line_spans(1).unwrap();
+        assert_eq!(
+            second,
+            &[StyledSpan {
+                start: 0,
+                end: 4,
+                style_id: StyleId::Default,
+            }]
         );
     }
 
