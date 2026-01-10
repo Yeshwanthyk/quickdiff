@@ -263,6 +263,7 @@ fn run_tui(
 fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
     loop {
         app.poll_worker();
+        app.poll_pr_worker();
         app.poll_watcher();
 
         // Only redraw if dirty or on resize

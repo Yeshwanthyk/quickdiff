@@ -26,7 +26,10 @@ use crossterm::{
 };
 use shell_words::split;
 
-use super::worker::{spawn_diff_worker, DiffLoadRequest, DiffLoadResponse, DiffWorker};
+use super::worker::{
+    spawn_diff_worker, spawn_pr_worker, DiffLoadRequest, DiffLoadResponse, DiffWorker, PrRequest,
+    PrResponse, PrWorker,
+};
 
 /// Focus state for the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,6 +201,13 @@ pub struct App {
     /// File system watcher for live reload.
     watcher: Option<RepoWatcher>,
 
+    // PR worker state
+    pr_worker: PrWorker,
+    next_pr_request_id: u64,
+    pending_pr_list_id: Option<u64>,
+    pending_pr_load_id: Option<u64>,
+    pending_pr: Option<crate::core::PullRequest>,
+
     // PR mode state
     /// Whether we're in PR review mode.
     pub pr_mode: bool,
@@ -303,6 +313,7 @@ impl App {
         let open_comment_counts = load_open_comment_counts(&repo, &comment_context);
 
         let worker = spawn_diff_worker(repo.clone());
+        let pr_worker = spawn_pr_worker(repo.clone());
 
         let mut app = Self {
             repo,
@@ -352,6 +363,11 @@ impl App {
             theme_original: theme_name.unwrap_or("default").to_string(),
             diff_pane_mode: DiffPaneMode::Both,
             watcher: None,
+            pr_worker,
+            next_pr_request_id: 1,
+            pending_pr_list_id: None,
+            pending_pr_load_id: None,
+            pending_pr: None,
             pr_mode: false,
             current_pr: None,
             pr_files: Vec::new(),
@@ -546,6 +562,32 @@ impl App {
         self.enqueue_diff_request(req);
     }
 
+    fn send_pr_request(&mut self, req: PrRequest) -> bool {
+        let Some(tx) = self.pr_worker.request_tx.as_ref() else {
+            self.error_msg = Some("PR worker stopped".to_string());
+            self.pr_loading = false;
+            self.loading = false;
+            self.pending_pr_list_id = None;
+            self.pending_pr_load_id = None;
+            self.pending_pr = None;
+            self.dirty = true;
+            return false;
+        };
+
+        if tx.send(req).is_err() {
+            self.error_msg = Some("PR worker stopped".to_string());
+            self.pr_loading = false;
+            self.loading = false;
+            self.pending_pr_list_id = None;
+            self.pending_pr_load_id = None;
+            self.pending_pr = None;
+            self.dirty = true;
+            return false;
+        }
+
+        true
+    }
+
     /// Apply any completed diff loads.
     pub fn poll_worker(&mut self) {
         while let Ok(msg) = self.worker.response_rx.try_recv() {
@@ -609,6 +651,107 @@ impl App {
         }
 
         self.flush_queued_diff_request();
+    }
+
+    /// Apply any completed PR loads.
+    pub fn poll_pr_worker(&mut self) {
+        while let Ok(msg) = self.pr_worker.response_rx.try_recv() {
+            match msg {
+                PrResponse::List { id, prs } => {
+                    if self.pending_pr_list_id != Some(id) {
+                        continue;
+                    }
+
+                    self.pending_pr_list_id = None;
+                    self.pr_list = prs;
+                    self.pr_loading = false;
+                    self.error_msg = None;
+
+                    if self.pr_list.is_empty() {
+                        self.status_msg = Some("No PRs found".to_string());
+                    }
+
+                    self.dirty = true;
+                }
+                PrResponse::ListError { id, message } => {
+                    if self.pending_pr_list_id != Some(id) {
+                        continue;
+                    }
+
+                    self.pending_pr_list_id = None;
+                    self.pr_list.clear();
+                    self.pr_loading = false;
+                    self.error_msg = Some(format!("Failed to fetch PRs: {}", message));
+                    self.dirty = true;
+                }
+                PrResponse::Diff { id, diff } => {
+                    if self.pending_pr_load_id != Some(id) {
+                        continue;
+                    }
+
+                    self.pending_pr_load_id = None;
+                    self.pr_loading = false;
+                    self.loading = false;
+                    self.error_msg = None;
+
+                    let pr = match self.pending_pr.take().or_else(|| self.current_pr.clone()) {
+                        Some(pr) => pr,
+                        None => {
+                            self.error_msg = Some("No PR selected".to_string());
+                            self.dirty = true;
+                            continue;
+                        }
+                    };
+
+                    let pr_files = crate::core::parse_unified_diff(&diff);
+
+                    self.files = pr_files
+                        .iter()
+                        .map(|pf| ChangedFile {
+                            path: pf.path.clone(),
+                            kind: pf.kind,
+                            old_path: pf.old_path.clone(),
+                        })
+                        .collect();
+
+                    self.pr_files = pr_files;
+                    self.pr_mode = true;
+                    self.current_pr = Some(pr.clone());
+
+                    self.source = DiffSource::PullRequest {
+                        number: pr.number,
+                        head: pr.head_ref_name.clone(),
+                        base: pr.base_ref_name.clone(),
+                    };
+
+                    self.selected_idx = 0;
+                    self.sidebar_scroll = 0;
+
+                    if !self.files.is_empty() {
+                        self.request_current_pr_diff();
+                    } else {
+                        self.diff = None;
+                        self.old_buffer = None;
+                        self.new_buffer = None;
+                        self.status_msg = Some("PR has no changed files".to_string());
+                    }
+
+                    self.dirty = true;
+                }
+                PrResponse::DiffError { id, message } => {
+                    if self.pending_pr_load_id != Some(id) {
+                        continue;
+                    }
+
+                    self.pending_pr_load_id = None;
+                    self.pending_pr = None;
+                    self.pr_loading = false;
+                    self.loading = false;
+                    self.error_msg = Some(format!("Failed to load PR diff: {}", message));
+                    self.dirty = true;
+                }
+            }
+        }
     }
 
     /// Move selection up in sidebar.
@@ -1575,19 +1718,16 @@ impl App {
         self.pr_loading = true;
         self.error_msg = None;
 
-        match crate::core::list_prs(self.repo.path(), self.pr_filter) {
-            Ok(prs) => {
-                self.pr_list = prs;
-                self.pr_loading = false;
-                if self.pr_list.is_empty() {
-                    self.status_msg = Some("No PRs found".to_string());
-                }
-            }
-            Err(e) => {
-                self.pr_list.clear();
-                self.pr_loading = false;
-                self.error_msg = Some(format!("Failed to fetch PRs: {}", e));
-            }
+        let id = self.next_pr_request_id;
+        self.next_pr_request_id = self.next_pr_request_id.wrapping_add(1);
+        self.pending_pr_list_id = Some(id);
+
+        if !self.send_pr_request(PrRequest::List {
+            id,
+            filter: self.pr_filter,
+        }) {
+            self.pending_pr_list_id = None;
+            self.pr_loading = false;
         }
 
         self.dirty = true;
@@ -1599,6 +1739,8 @@ impl App {
         self.pr_list.clear();
         self.pr_picker_selected = 0;
         self.pr_picker_scroll = 0;
+        self.pr_loading = false;
+        self.pending_pr_list_id = None;
         self.dirty = true;
     }
 
@@ -1651,59 +1793,41 @@ impl App {
     /// Load a specific PR's diff.
     pub fn load_pr(&mut self, pr: crate::core::PullRequest) {
         self.pr_loading = true;
+        self.loading = true;
         self.error_msg = None;
         self.mode = Mode::Normal;
         self.dirty = true;
 
-        // Fetch PR diff
-        match crate::core::get_pr_diff(self.repo.path(), pr.number) {
-            Ok(raw_diff) => {
-                // Parse unified diff into file list
-                let pr_files = crate::core::parse_unified_diff(&raw_diff);
+        let id = self.next_pr_request_id;
+        self.next_pr_request_id = self.next_pr_request_id.wrapping_add(1);
+        self.pending_pr_load_id = Some(id);
+        self.pending_pr = Some(pr.clone());
 
-                // Convert to ChangedFile for compatibility with existing UI
-                self.files = pr_files
-                    .iter()
-                    .map(|pf| ChangedFile {
-                        path: pf.path.clone(),
-                        kind: pf.kind,
-                        old_path: pf.old_path.clone(),
-                    })
-                    .collect();
+        self.pr_mode = true;
+        self.current_pr = Some(pr.clone());
+        self.pr_files.clear();
+        self.files.clear();
+        self.diff = None;
+        self.old_buffer = None;
+        self.new_buffer = None;
+        self.is_binary = false;
+        self.scroll_y = 0;
+        self.scroll_x = 0;
 
-                self.pr_files = pr_files;
-                self.pr_mode = true;
-                self.current_pr = Some(pr.clone());
+        self.source = DiffSource::PullRequest {
+            number: pr.number,
+            head: pr.head_ref_name.clone(),
+            base: pr.base_ref_name.clone(),
+        };
 
-                // Update diff source
-                self.source = DiffSource::PullRequest {
-                    number: pr.number,
-                    head: pr.head_ref_name.clone(),
-                    base: pr.base_ref_name.clone(),
-                };
-
-                // Reset selection
-                self.selected_idx = 0;
-                self.sidebar_scroll = 0;
-                self.pr_loading = false;
-
-                // Load first file's diff
-                if !self.files.is_empty() {
-                    self.request_current_pr_diff();
-                } else {
-                    self.diff = None;
-                    self.old_buffer = None;
-                    self.new_buffer = None;
-                    self.status_msg = Some("PR has no changed files".to_string());
-                }
-
-                self.dirty = true;
-            }
-            Err(e) => {
-                self.pr_loading = false;
-                self.error_msg = Some(format!("Failed to load PR diff: {}", e));
-                self.dirty = true;
-            }
+        if !self.send_pr_request(PrRequest::LoadDiff {
+            id,
+            pr_number: pr.number,
+        }) {
+            self.pending_pr_load_id = None;
+            self.pending_pr = None;
+            self.pr_loading = false;
+            self.loading = false;
         }
     }
 
@@ -1765,6 +1889,10 @@ impl App {
         self.pr_mode = false;
         self.current_pr = None;
         self.pr_files.clear();
+        self.pending_pr_load_id = None;
+        self.pending_pr = None;
+        self.pr_loading = false;
+        self.loading = false;
         self.source = DiffSource::WorkingTree;
 
         // Reload working tree files

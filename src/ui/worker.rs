@@ -3,7 +3,10 @@
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
 
-use crate::core::{load_diff_contents, ChangedFile, DiffResult, DiffSource, RepoRoot, TextBuffer};
+use crate::core::{
+    get_pr_diff, list_prs, load_diff_contents, ChangedFile, DiffResult, DiffSource, PRFilter,
+    PullRequest, RepoRoot, TextBuffer,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct DiffLoadRequest {
@@ -144,6 +147,130 @@ fn compute_diff_payload(repo: &RepoRoot, req: DiffLoadRequest) -> DiffLoadRespon
         new_buffer,
         diff,
         is_binary,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum PrRequest {
+    List {
+        id: u64,
+        filter: PRFilter,
+    },
+    LoadDiff {
+        id: u64,
+        pr_number: u32,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) enum PrResponse {
+    List {
+        id: u64,
+        prs: Vec<PullRequest>,
+    },
+    ListError {
+        id: u64,
+        message: String,
+    },
+    Diff {
+        id: u64,
+        diff: String,
+    },
+    DiffError {
+        id: u64,
+        message: String,
+    },
+}
+
+pub(crate) struct PrWorker {
+    /// Wrapped in Option so we can drop it before joining the thread.
+    pub request_tx: Option<Sender<PrRequest>>,
+    pub response_rx: Receiver<PrResponse>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for PrWorker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrWorker")
+            .field("request_tx", &self.request_tx)
+            .field("response_rx", &self.response_rx)
+            .field("handle", &self.handle.as_ref().map(|_| "..."))
+            .finish()
+    }
+}
+
+pub(crate) fn spawn_pr_worker(repo: RepoRoot) -> PrWorker {
+    let (request_tx, request_rx) = mpsc::channel::<PrRequest>();
+    let (response_tx, response_rx) = mpsc::channel::<PrResponse>();
+
+    let handle = thread::spawn(move || pr_worker_loop(repo, request_rx, response_tx));
+
+    PrWorker {
+        request_tx: Some(request_tx),
+        response_rx,
+        handle: Some(handle),
+    }
+}
+
+impl Drop for PrWorker {
+    fn drop(&mut self) {
+        drop(self.request_tx.take());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn pr_worker_loop(
+    repo: RepoRoot,
+    request_rx: Receiver<PrRequest>,
+    response_tx: Sender<PrResponse>,
+) {
+    while let Ok(req) = request_rx.recv() {
+        let (id, is_list) = match &req {
+            PrRequest::List { id, .. } => (*id, true),
+            PrRequest::LoadDiff { id, .. } => (*id, false),
+        };
+
+        let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compute_pr_response(&repo, req)
+        })) {
+            Ok(resp) => resp,
+            Err(panic) => {
+                let message = if let Some(s) = panic.downcast_ref::<&str>() {
+                    format!("worker panic: {}", s)
+                } else if let Some(s) = panic.downcast_ref::<String>() {
+                    format!("worker panic: {}", s)
+                } else {
+                    "worker panic: unknown error".to_string()
+                };
+                if is_list {
+                    PrResponse::ListError { id, message }
+                } else {
+                    PrResponse::DiffError { id, message }
+                }
+            }
+        };
+        let _ = response_tx.send(response);
+    }
+}
+
+fn compute_pr_response(repo: &RepoRoot, req: PrRequest) -> PrResponse {
+    match req {
+        PrRequest::List { id, filter } => match list_prs(repo.path(), filter) {
+            Ok(prs) => PrResponse::List { id, prs },
+            Err(e) => PrResponse::ListError {
+                id,
+                message: e.to_string(),
+            },
+        },
+        PrRequest::LoadDiff { id, pr_number } => match get_pr_diff(repo.path(), pr_number) {
+            Ok(diff) => PrResponse::Diff { id, diff },
+            Err(e) => PrResponse::DiffError {
+                id,
+                message: e.to_string(),
+            },
+        },
     }
 }
 

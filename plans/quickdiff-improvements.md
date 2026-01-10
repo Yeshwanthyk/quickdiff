@@ -7,7 +7,7 @@ Scope: address all findings from the review, keeping behavior consistent and avo
   - Ensure UI state handles skipped requests (pending_request_id, loading flag, error state).
   - Add a small unit test for the worker queue behavior (latest request wins).
 
-- [ ] 2) PR operations off the UI thread
+- [x] 2) PR operations off the UI thread
   - Add a PR worker with request/response messages (list PRs, load PR diff).
   - Update App to set pr_loading immediately and apply worker responses asynchronously.
   - Ensure UI stays responsive during gh operations and error state is surfaced.
