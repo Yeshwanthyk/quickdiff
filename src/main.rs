@@ -1,4 +1,4 @@
-//! quickdiff - A git-first terminal diff viewer.
+//! quickdiff - A git/jj-first terminal diff viewer.
 
 use std::io::{self, Write};
 use std::panic;
@@ -18,7 +18,7 @@ use quickdiff::cli::run_comments_command;
 use quickdiff::core::{DiffSource, RepoRoot};
 use quickdiff::ui::{handle_input, render, App};
 
-/// A git-first terminal diff viewer.
+/// A git/jj-first terminal diff viewer.
 #[derive(Parser, Debug)]
 #[command(name = "quickdiff", version, about)]
 struct Cli {
@@ -30,7 +30,7 @@ struct Cli {
     #[arg(short = 'b', long = "base")]
     base: Option<String>,
 
-    /// Revision or range (e.g., HEAD~3, abc123..def456, origin/main)
+    /// Revision or range (e.g., HEAD~3, abc123..def456, origin/main, @-..@)
     #[arg(value_name = "REV")]
     revision: Option<String>,
 
@@ -123,16 +123,8 @@ fn parse_diff_source(cli: &Cli) -> DiffSource {
             // Handle ... (three dots) as well
             let to = to.strip_prefix('.').unwrap_or(to);
             return DiffSource::Range {
-                from: if from.is_empty() {
-                    "HEAD".to_string()
-                } else {
-                    from.to_string()
-                },
-                to: if to.is_empty() {
-                    "HEAD".to_string()
-                } else {
-                    to.to_string()
-                },
+                from: from.to_string(),
+                to: to.to_string(),
             };
         }
 
@@ -162,7 +154,7 @@ fn run_cli_comments(args: &[String]) -> ExitCode {
     let repo = match RepoRoot::discover(&cwd) {
         Ok(repo) => repo,
         Err(quickdiff::core::RepoError::NotARepo) => {
-            eprintln!("Error: Not inside a git repository");
+            eprintln!("Error: Not inside a git or jj repository");
             return ExitCode::from(1);
         }
         Err(e) => {
@@ -198,7 +190,7 @@ fn run_tui(
     let repo = match RepoRoot::discover(&cwd) {
         Ok(repo) => repo,
         Err(quickdiff::core::RepoError::NotARepo) => {
-            eprintln!("Error: Not inside a git repository");
+            eprintln!("Error: Not inside a git or jj repository");
             std::process::exit(1);
         }
         Err(e) => {
@@ -206,6 +198,14 @@ fn run_tui(
             std::process::exit(1);
         }
     };
+
+    let mut source = source;
+    source.apply_defaults(repo.working_copy_parent_ref());
+
+    if repo.is_jj() && pr_number.is_some() {
+        eprintln!("Error: PR mode requires a git repository");
+        std::process::exit(1);
+    }
 
     // Create app with diff source and file filter
     let mut app = App::new(repo.clone(), source, file_filter, theme.as_deref())?;

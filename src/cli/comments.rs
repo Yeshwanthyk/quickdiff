@@ -132,7 +132,15 @@ fn parse_context(
     }
 
     if let Some(range) = range {
-        let (from, to) = parse_range(&range)?;
+        let (mut from, mut to) = parse_range(&range)?;
+        let default_ref = repo.working_copy_parent_ref();
+        if from.is_empty() {
+            from = default_ref.to_string();
+        }
+        if to.is_empty() {
+            to = default_ref.to_string();
+        }
+
         let from_sha = resolve_revision(repo, &from)
             .map_err(|e| format!("Failed to resolve revision {}: {}", from, e))?;
         let to_sha = resolve_revision(repo, &to)
@@ -161,9 +169,6 @@ fn parse_range(s: &str) -> Result<(String, String), String> {
     let to = &s[idx + 2..];
 
     let to = to.strip_prefix('.').unwrap_or(to);
-
-    let from = if from.is_empty() { "HEAD" } else { from };
-    let to = if to.is_empty() { "HEAD" } else { to };
 
     Ok((from.to_string(), to.to_string()))
 }
