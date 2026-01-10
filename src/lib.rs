@@ -1,6 +1,6 @@
-//! quickdiff - A git-first terminal diff viewer.
+//! quickdiff - A git/jj-first terminal diff viewer.
 //!
-//! A TUI application for reviewing git diffs with syntax highlighting,
+//! A TUI application for reviewing git/jj diffs with syntax highlighting,
 //! hunk navigation, and comment support.
 //!
 //! # Quick Start

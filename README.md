@@ -1,6 +1,6 @@
 # quickdiff
 
-`quickdiff` is a panic-safe, terminal-native diff viewer focused on fast git reviews. It keeps both panes fully rendered, jumps straight to the first change, and pairs tree-sitter highlighting with a rock-solid TextBuffer so scrolling through large files stays smooth.
+`quickdiff` is a panic-safe, terminal-native diff viewer focused on fast git/jj reviews. It keeps both panes fully rendered, jumps straight to the first change, and pairs tree-sitter highlighting with a rock-solid TextBuffer so scrolling through large files stays smooth.
 
 ## Installation
 
@@ -11,13 +11,18 @@
 ## Usage
 
 ```
-quickdiff                     # Working tree vs HEAD (default)
-quickdiff -c <commit>         # Inspect a specific commit
-quickdiff <from>..<to>        # Compare two refs
+quickdiff                     # Working tree vs HEAD/@- (default)
+quickdiff -c <commit>         # Inspect a specific commit (git SHA or jj revset)
+quickdiff <from>..<to>        # Compare two refs (git or jj)
+quickdiff @-..@               # JJ working copy range example
 quickdiff -b <branch>         # Diff against merge-base with a branch
 quickdiff -f <path>           # Limit to the given files/directories
 quickdiff comments list|add|resolve
 ```
+
+### Jujutsu (jj) Support
+
+quickdiff auto-detects `.jj` repositories (prefers jj when colocated with `.git`). JJ revsets like `@`, `@-`, bookmarks, and change IDs are accepted for commit/range arguments. Open-ended ranges default to `@-` in jj repos and `HEAD` in git repos. PR mode requires a git repo.
 
 ### Watch Mode
 
@@ -47,8 +52,8 @@ Working tree and base comparisons keep a file-system watcher running so diffs re
 - **Toggle focus vs. immersion:** Keep the sidebar visible for context or stay diff-only by focusing pane `2` or popping a single pane full-width.
 - **Persistent viewed state:** quickdiff remembers the last selected file and which entries are marked viewed via `~/.config/quickdiff/state.json`.
 
-### Git Sources & Review Flow
-- **Multiple diff sources:** Run against working tree, a specific commit (`-c`), a branch merge-base (`-b`), or any `<from>..<to>` range.
+### Git/JJ Sources & Review Flow
+- **Multiple diff sources:** Run against working tree, a specific commit (`-c`), a branch merge-base (`-b`), or any `<from>..<to>` range (jj revsets supported).
 - **Watch mode with manual backup:** Working tree and base comparisons auto-refresh on file changes; `r` is there for manual reloads or historical modes.
 - **Mark-as-viewed workflow:** `Space` toggles the current file, auto-advances, and persists progress so directories inherit a “done” feel as you work.
 - **Commenting workflow:** `c` adds comments, `C` reviews or resolves them, and `quickdiff comments ...` mirrors that from the CLI.
@@ -69,7 +74,7 @@ Working tree and base comparisons keep a file-system watcher running so diffs re
 
 ### Reliability & Performance
 - **TextBuffer power:** Files load into `Arc<[u8]>` storage with CRLF normalization, O(1) line lookup, binary detection, and lossy UTF-8 decoding for malformed blobs.
-- **Git integration:** Uses porcelain v1 with `-z`, handles renames/copies, and only loads file contents when selected.
+- **Git/jj integration:** Uses porcelain v1 with `-z`, handles renames/copies, and only loads file contents when selected. JJ uses jj-lib for native access.
 - **Panic-safe terminal:** RAII guards restore the terminal even if the app crashes; control characters are sanitized before rendering.
 - **Lazy, viewport-scoped rendering:** Only rows that matter for the current scroll position are drawn, minimizing work.
 - **File watching:** notify-based watcher keeps the view in sync during active work.
@@ -83,7 +88,7 @@ Working tree and base comparisons keep a file-system watcher running so diffs re
 - **Full-context diffs:** Hunks are never collapsed; `{`/`}` jumps paired with sticky headers keep all surrounding code visible.
 - **File sidebar:** Directory-grouped list with change badges, viewed ticks, fuzzy filter, and focus toggles for diff-only or split layouts.
 - **Watch mode:** Working tree/base modes auto-refresh on file changes; `r` can always force a reload.
-- **Git sources:** Inspect uncommitted work, a specific commit, branch comparisons via merge-base, or any `<from>..<to>` revision range.
+- **Git/jj sources:** Inspect uncommitted work, a specific commit, branch comparisons via merge-base, or any `<from>..<to>` revision range.
 - **Viewed tracking:** `Space` marks files viewed, persists progress, and auto-advances so directories effectively track review completion.
 - **Clipboard/export:** `y` copies the current path; all diff data stays repo-relative for easy sharing.
 - **External editor jump:** `o` opens the file in `$QUICKDIFF_EDITOR`/`$VISUAL`/`$EDITOR`, then restores the TUI when you quit.

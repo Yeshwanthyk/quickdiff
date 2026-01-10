@@ -5,6 +5,7 @@ All notable changes to quickdiff are documented here.
 ## [Unreleased]
 
 ### Added
+- Jujutsu (jj) repository support with auto-detection, jj revsets, and jj-backed diffs.
 - `y` copies the selected file path to the system clipboard for quick sharing.
 - `o` opens the highlighted file in `$QUICKDIFF_EDITOR`, falling back to `$VISUAL` and `$EDITOR`.
 - `r` forces a manual reload of the working tree/base file list (or re-renders commit/range diffs).
