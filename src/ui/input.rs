@@ -155,6 +155,10 @@ fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
             app.prev_hunk();
             true
         }
+        KeyCode::Char('z') => {
+            app.toggle_diff_view_mode();
+            true
+        }
         KeyCode::PageDown => {
             app.scroll_diff(20, 0);
             true
@@ -165,9 +169,8 @@ fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('G') => {
             // Go to end
-            if let Some(diff) = &app.diff {
-                app.scroll_y = diff.row_count().saturating_sub(1);
-            }
+            let max_scroll = app.view_row_count();
+            app.scroll_y = max_scroll.saturating_sub(1);
             true
         }
         KeyCode::Char('g') => {

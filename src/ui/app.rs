@@ -13,7 +13,7 @@ use crate::core::{
     list_changed_files_between, list_changed_files_from_base_with_merge_base, list_commit_files,
     resolve_revision, selector_from_hunk, Anchor, ChangedFile, CommentContext, CommentStatus,
     CommentStore, DiffResult, DiffSource, FileCommentStore, FileViewedStore, FuzzyMatcher, RelPath,
-    RepoRoot, RepoWatcher, Selector, TextBuffer, ViewedStore,
+    RenderRow, RepoRoot, RepoWatcher, Selector, TextBuffer, ViewedStore,
 };
 use crate::highlight::{query_scopes, FileHighlightCache, HighlighterCache, LanguageId, ScopeInfo};
 use crate::theme::Theme;
@@ -82,6 +82,16 @@ pub enum DiffPaneMode {
     NewOnly,
 }
 
+/// View mode for diffs (hunks-only vs full file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiffViewMode {
+    /// Only render hunks with context lines.
+    #[default]
+    HunksOnly,
+    /// Render the full file.
+    FullFile,
+}
+
 #[derive(Debug, Clone)]
 pub struct CommentViewItem {
     pub id: u64,
@@ -146,6 +156,9 @@ pub struct App {
     pub scroll_y: usize,
     /// Horizontal scroll offset in diff view.
     pub scroll_x: usize,
+    /// Diff view mode (hunks-only vs full file).
+    pub diff_view_mode: DiffViewMode,
+    hunk_view_rows: Vec<usize>,
 
     // UI state
     /// Current UI mode.
@@ -268,6 +281,31 @@ fn load_open_comment_counts(repo: &RepoRoot, context: &CommentContext) -> HashMa
     counts
 }
 
+fn build_view_rows(diff: &DiffResult, mode: DiffViewMode) -> Vec<usize> {
+    if mode != DiffViewMode::HunksOnly {
+        return Vec::new();
+    }
+
+    let mut rows = Vec::new();
+    for hunk in diff.hunks() {
+        rows.extend(hunk.start_row..(hunk.start_row + hunk.row_count));
+    }
+    rows
+}
+
+fn map_diff_row_to_view_row(view_rows: &[usize], diff_row: usize) -> Option<usize> {
+    if view_rows.is_empty() {
+        return None;
+    }
+
+    let pos = view_rows.partition_point(|&row| row < diff_row);
+    if pos < view_rows.len() {
+        Some(pos)
+    } else {
+        Some(view_rows.len() - 1)
+    }
+}
+
 impl App {
     /// Create a new App from a repository root with optional diff source and file filter.
     pub fn new(
@@ -345,6 +383,8 @@ impl App {
             is_binary: false,
             scroll_y: 0,
             scroll_x: 0,
+            diff_view_mode: DiffViewMode::HunksOnly,
+            hunk_view_rows: Vec::new(),
             mode: Mode::default(),
             draft_comment: String::new(),
             viewing_comments: Vec::new(),
@@ -482,6 +522,7 @@ impl App {
 
         let Some(file) = self.selected_file().cloned() else {
             self.diff = None;
+            self.hunk_view_rows.clear();
             self.old_buffer = None;
             self.new_buffer = None;
             self.pending_request_id = None;
@@ -501,6 +542,7 @@ impl App {
 
         // Clear existing state immediately so UI reflects selection changes.
         self.diff = None;
+        self.hunk_view_rows.clear();
         self.old_buffer = None;
         self.new_buffer = None;
         self.old_scopes.clear();
@@ -622,9 +664,13 @@ impl App {
                     self.new_buffer = Some(new_buffer.clone());
                     self.diff = diff;
 
+                    self.rebuild_view_rows();
+                    self.scroll_y = 0;
                     if let Some(diff) = self.diff.as_ref() {
                         if let Some(first) = diff.hunks().first() {
-                            self.scroll_y = first.start_row;
+                            if let Some(view_row) = self.diff_row_to_view_row(first.start_row) {
+                                self.scroll_y = view_row;
+                            }
                         }
                     }
 
@@ -657,6 +703,7 @@ impl App {
                     self.pending_request_id = None;
                     self.loading = false;
                     self.diff = None;
+                    self.hunk_view_rows.clear();
                     self.old_buffer = None;
                     self.new_buffer = None;
                     self.old_highlights.clear();
@@ -749,6 +796,7 @@ impl App {
                         self.request_current_pr_diff();
                     } else {
                         self.diff = None;
+                        self.hunk_view_rows.clear();
                         self.old_buffer = None;
                         self.new_buffer = None;
                         self.status_msg = Some("PR has no changed files".to_string());
@@ -865,6 +913,99 @@ impl App {
         // All files viewed - stay on current
     }
 
+    fn rebuild_view_rows(&mut self) {
+        self.hunk_view_rows = match self.diff.as_ref() {
+            Some(diff) => build_view_rows(diff, self.diff_view_mode),
+            None => Vec::new(),
+        };
+    }
+
+    pub(crate) fn view_row_count(&self) -> usize {
+        let Some(diff) = &self.diff else {
+            return 0;
+        };
+
+        match self.diff_view_mode {
+            DiffViewMode::FullFile => diff.row_count(),
+            DiffViewMode::HunksOnly => self.hunk_view_rows.len(),
+        }
+    }
+
+    pub(crate) fn view_row_to_diff_row(&self, view_row: usize) -> Option<usize> {
+        let diff = self.diff.as_ref()?;
+        match self.diff_view_mode {
+            DiffViewMode::FullFile => {
+                if view_row < diff.row_count() {
+                    Some(view_row)
+                } else {
+                    None
+                }
+            }
+            DiffViewMode::HunksOnly => self.hunk_view_rows.get(view_row).copied(),
+        }
+    }
+
+    fn diff_row_to_view_row(&self, diff_row: usize) -> Option<usize> {
+        match self.diff_view_mode {
+            DiffViewMode::FullFile => {
+                let diff = self.diff.as_ref()?;
+                if diff_row < diff.row_count() {
+                    Some(diff_row)
+                } else {
+                    None
+                }
+            }
+            DiffViewMode::HunksOnly => map_diff_row_to_view_row(&self.hunk_view_rows, diff_row),
+        }
+    }
+
+    pub(crate) fn visible_diff_rows(&self, height: usize) -> Vec<(usize, &RenderRow)> {
+        let Some(diff) = &self.diff else {
+            return Vec::new();
+        };
+
+        let mut rows = Vec::new();
+        match self.diff_view_mode {
+            DiffViewMode::FullFile => {
+                for (offset, row) in diff.render_rows(self.scroll_y, height).enumerate() {
+                    let row_idx = self.scroll_y + offset;
+                    rows.push((row_idx, row));
+                }
+            }
+            DiffViewMode::HunksOnly => {
+                let start = self.scroll_y;
+                let end = start.saturating_add(height);
+                for view_idx in start..end {
+                    let Some(&row_idx) = self.hunk_view_rows.get(view_idx) else {
+                        break;
+                    };
+                    if let Some(row) = diff.rows().get(row_idx) {
+                        rows.push((row_idx, row));
+                    }
+                }
+            }
+        }
+
+        rows
+    }
+
+    /// Toggle between hunks-only and full-file diff views.
+    pub fn toggle_diff_view_mode(&mut self) {
+        let current_row = self.view_row_to_diff_row(self.scroll_y);
+
+        self.diff_view_mode = match self.diff_view_mode {
+            DiffViewMode::HunksOnly => DiffViewMode::FullFile,
+            DiffViewMode::FullFile => DiffViewMode::HunksOnly,
+        };
+
+        self.rebuild_view_rows();
+
+        self.scroll_y = current_row
+            .and_then(|row| self.diff_row_to_view_row(row))
+            .unwrap_or(0);
+        self.dirty = true;
+    }
+
     /// Scroll diff view.
     pub fn scroll_diff(&mut self, delta_y: isize, delta_x: isize) {
         let old_y = self.scroll_y;
@@ -873,8 +1014,12 @@ impl App {
         if delta_y < 0 {
             self.scroll_y = self.scroll_y.saturating_sub((-delta_y) as usize);
         } else {
-            let max_scroll = self.diff.as_ref().map(|d| d.row_count()).unwrap_or(0);
-            self.scroll_y = (self.scroll_y + delta_y as usize).min(max_scroll.saturating_sub(1));
+            let max_scroll = self.view_row_count();
+            if max_scroll == 0 {
+                self.scroll_y = 0;
+            } else {
+                self.scroll_y = (self.scroll_y + delta_y as usize).min(max_scroll - 1);
+            }
         }
 
         if delta_x < 0 {
@@ -890,9 +1035,16 @@ impl App {
 
     /// Jump to next hunk.
     pub fn next_hunk(&mut self) {
-        if let Some(diff) = &self.diff {
-            if let Some(row) = diff.next_hunk_row(self.scroll_y) {
-                self.scroll_y = row;
+        let Some(diff) = &self.diff else {
+            return;
+        };
+        let Some(current_row) = self.view_row_to_diff_row(self.scroll_y) else {
+            return;
+        };
+
+        if let Some(row) = diff.next_hunk_row(current_row) {
+            if let Some(view_row) = self.diff_row_to_view_row(row) {
+                self.scroll_y = view_row;
                 self.dirty = true;
             }
         }
@@ -900,9 +1052,16 @@ impl App {
 
     /// Jump to previous hunk.
     pub fn prev_hunk(&mut self) {
-        if let Some(diff) = &self.diff {
-            if let Some(row) = diff.prev_hunk_row(self.scroll_y) {
-                self.scroll_y = row;
+        let Some(diff) = &self.diff else {
+            return;
+        };
+        let Some(current_row) = self.view_row_to_diff_row(self.scroll_y) else {
+            return;
+        };
+
+        if let Some(row) = diff.prev_hunk_row(current_row) {
+            if let Some(view_row) = self.diff_row_to_view_row(row) {
+                self.scroll_y = view_row;
                 self.dirty = true;
             }
         }
@@ -916,7 +1075,8 @@ impl App {
         if hunks.is_empty() {
             return None;
         }
-        let hunk_idx = diff.hunk_at_row(self.scroll_y)?;
+        let row = self.view_row_to_diff_row(self.scroll_y)?;
+        let hunk_idx = diff.hunk_at_row(row)?;
         Some((hunk_idx + 1, hunks.len()))
     }
 
@@ -1165,7 +1325,13 @@ impl App {
             return;
         }
 
-        if diff.hunk_at_row(self.scroll_y).is_none() {
+        let Some(row) = self.view_row_to_diff_row(self.scroll_y) else {
+            self.error_msg = Some("Not on a hunk - navigate to a hunk first".to_string());
+            self.dirty = true;
+            return;
+        };
+
+        if diff.hunk_at_row(row).is_none() {
             self.error_msg = Some("Not on a hunk - navigate to a hunk first".to_string());
             self.dirty = true;
             return;
@@ -1200,7 +1366,14 @@ impl App {
             return;
         };
 
-        let Some(hunk_idx) = diff.hunk_at_row(self.scroll_y) else {
+        let Some(row) = self.view_row_to_diff_row(self.scroll_y) else {
+            self.error_msg = Some("No hunk at current position".to_string());
+            self.mode = Mode::Normal;
+            self.dirty = true;
+            return;
+        };
+
+        let Some(hunk_idx) = diff.hunk_at_row(row) else {
             self.error_msg = Some("No hunk at current position".to_string());
             self.mode = Mode::Normal;
             self.dirty = true;
@@ -1412,7 +1585,7 @@ impl App {
             return;
         };
 
-        self.scroll_y = row;
+        self.scroll_y = self.diff_row_to_view_row(row).unwrap_or(0);
         self.focus = Focus::Diff;
         self.close_comments();
         self.dirty = true;
@@ -1680,6 +1853,7 @@ impl App {
                     self.request_current_diff();
                 } else {
                     self.diff = None;
+                    self.hunk_view_rows.clear();
                     self.old_buffer = None;
                     self.new_buffer = None;
                 }
@@ -1826,6 +2000,7 @@ impl App {
         self.pr_files.clear();
         self.files.clear();
         self.diff = None;
+        self.hunk_view_rows.clear();
         self.old_buffer = None;
         self.new_buffer = None;
         self.old_scopes.clear();
@@ -1910,11 +2085,15 @@ impl App {
         self.old_buffer = Some(old_buffer);
         self.new_buffer = Some(new_buffer);
         self.diff = diff;
+        self.rebuild_view_rows();
+        self.scroll_y = 0;
 
         // Jump to first hunk
         if let Some(diff) = self.diff.as_ref() {
             if let Some(first) = diff.hunks().first() {
-                self.scroll_y = first.start_row;
+                if let Some(view_row) = self.diff_row_to_view_row(first.start_row) {
+                    self.scroll_y = view_row;
+                }
             }
         }
 
@@ -2118,6 +2297,7 @@ fn extract_content_from_patch(patch: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::{DiffResult, TextBuffer};
 
     #[test]
     fn test_extract_content_from_patch_simple() {
@@ -2199,5 +2379,31 @@ rename to new.rs
         let (old, new) = extract_content_from_patch(patch);
         assert_eq!(old, "deleted line 1\ndeleted line 2");
         assert_eq!(new, "");
+    }
+
+    #[test]
+    fn view_rows_use_hunks_only() {
+        let old = TextBuffer::new(b"l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n");
+        let new = TextBuffer::new(b"l1\nx\nl3\nl4\nl5\nl6\nl7\ny\nl9\nl10\n");
+        let diff = DiffResult::compute_with_context(&old, &new, 1);
+
+        assert_eq!(diff.hunks().len(), 2);
+
+        let view_rows = build_view_rows(&diff, DiffViewMode::HunksOnly);
+        let total_rows: usize = diff.hunks().iter().map(|h| h.row_count).sum();
+        assert_eq!(view_rows.len(), total_rows);
+
+        let first = diff.hunks().first().unwrap();
+        let second = diff.hunks().last().unwrap();
+        let gap_row = first.start_row + first.row_count;
+        let mapped = map_diff_row_to_view_row(&view_rows, gap_row).unwrap();
+        assert_eq!(view_rows[mapped], second.start_row);
+
+        let after_last = second.start_row + second.row_count + 5;
+        let mapped_last = map_diff_row_to_view_row(&view_rows, after_last).unwrap();
+        assert_eq!(
+            view_rows[mapped_last],
+            second.start_row + second.row_count - 1
+        );
     }
 }

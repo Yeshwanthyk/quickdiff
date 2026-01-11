@@ -603,23 +603,7 @@ impl SpanBuilder {
 }
 
 /// Compute the sticky scope for a pane based on the first visible source line.
-fn compute_sticky_scope<'a>(
-    diff: &crate::core::DiffResult,
-    scopes: &'a [ScopeInfo],
-    scroll_y: usize,
-    is_old: bool,
-) -> Option<&'a ScopeInfo> {
-    // Get the first visible row to find the source line number
-    let first_row = diff.render_rows(scroll_y, 1).next()?;
-
-    // Get the source line number for this pane
-    let line_num = if is_old {
-        first_row.old.as_ref()?.line_num
-    } else {
-        first_row.new.as_ref()?.line_num
-    };
-
-    // Find enclosing scope
+fn compute_sticky_scope(line_num: usize, scopes: &[ScopeInfo]) -> Option<&ScopeInfo> {
     let scope = find_enclosing_scope(scopes, line_num)?;
 
     // Only show if we've scrolled past the definition line
@@ -769,7 +753,17 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     } else {
         &app.new_scopes
     };
-    let sticky_scope = compute_sticky_scope(diff, scopes, app.scroll_y, is_old);
+    let first_row = app
+        .view_row_to_diff_row(app.scroll_y)
+        .and_then(|row_idx| diff.rows().get(row_idx));
+    let first_line_num = first_row.and_then(|row| {
+        if is_old {
+            row.old.as_ref().map(|line| line.line_num)
+        } else {
+            row.new.as_ref().map(|line| line.line_num)
+        }
+    });
+    let sticky_scope = first_line_num.and_then(|line_num| compute_sticky_scope(line_num, scopes));
     let has_sticky = sticky_scope.is_some();
 
     // Reserve 1 line for sticky header if present
@@ -787,11 +781,11 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     }
 
     // First pass: build spans and compute max visible width in this viewport.
-    let mut rendered: Vec<RenderedLine> = Vec::with_capacity(content_height);
+    let visible_rows = app.visible_diff_rows(content_height);
+    let mut rendered: Vec<RenderedLine> = Vec::with_capacity(visible_rows.len());
     let mut max_visible_len = 0usize;
 
-    for (offset, row) in diff.render_rows(app.scroll_y, content_height).enumerate() {
-        let row_idx = app.scroll_y + offset;
+    for (row_idx, row) in visible_rows {
         let has_comment = app.is_worktree_mode()
             && diff
                 .hunk_at_row(row_idx)
@@ -1328,6 +1322,7 @@ fn render_help_overlay(frame: &mut Frame, app: &App) {
         ("Tab, 1, 2", "Switch focus between sidebar/diff"),
         ("Space", "Toggle viewed & jump to next file"),
         ("{ / }", "Previous / next hunk"),
+        ("z", "Toggle hunks-only / full file view"),
         ("/", "Open sidebar fuzzy filter"),
         ("T", "Theme selector"),
         ("c / C", "Add or view comments"),
@@ -1622,6 +1617,7 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
         Focus::Diff => &[
             ("j/k", "scroll"),
             ("{/}", "hunks"),
+            ("z", "fold"),
             ("c", "comment"),
             ("C", "view"),
             ("␣", "view+next"),
