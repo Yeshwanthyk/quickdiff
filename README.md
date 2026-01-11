@@ -34,7 +34,8 @@ Working tree and base comparisons keep a file-system watcher running so diffs re
 - **Fast, always-on rendering:** Diff rows are generated up front, while a background worker streams updates to keep the UI responsive even on huge repos.
 - **Sticky context lines:** When you scroll past a function/class/impl boundary, the enclosing scope header pins to the top of each pane so you never lose place.
 - **Start at the meat:** Files open with the viewport positioned on the first hunk, so you land where the change actually happened.
-- **Hunk navigation without compaction:** `{` / `}` jump between hunks; context is never collapsed, so you can freely scroll into nearby code.
+- **Hunks-only view (default):** Only hunks with context lines are shown by default—press `z` to toggle full-file view when you need surrounding code.
+- **Hunk navigation:** `{` / `}` jump between hunks instantly.
 - **Vim-style movement:** `j/k/h/l`, `g/G`, `1/2`, and `Tab` cover navigation plus focus switching between sidebar and diff panes.
 - **Space-driven review flow:** `Space` toggles a file’s viewed state and auto-advances to the next unviewed entry.
 - **Keyboard _and_ mouse:** Scroll wheels, clicks for focus, and full keyboard control co-exist.
@@ -85,7 +86,7 @@ Working tree and base comparisons keep a file-system watcher running so diffs re
 - **Sticky scope headers:** As you move, the enclosing fn/class sticks to the top to anchor context.
 - **Vim-style navigation:** `j/k/h/l`, `g/G`, `{`/`}`, `/`, `Tab`, `1`, `2`, `[`, `]`, and `Space` cover seeking, filtering, focus, and fullscreen toggles.
 - **Tree-sitter highlighting:** Ten languages today (Rust, TypeScript, TSX, JavaScript, JSX, Go, Python, JSON, YAML, Bash) with plain text fallback.
-- **Full-context diffs:** Hunks are never collapsed; `{`/`}` jumps paired with sticky headers keep all surrounding code visible.
+- **Hunks-only by default:** Only changed regions with context are shown; `z` toggles full-file view when you need more surrounding code.
 - **File sidebar:** Directory-grouped list with change badges, viewed ticks, fuzzy filter, and focus toggles for diff-only or split layouts.
 - **Watch mode:** Working tree/base modes auto-refresh on file changes; `r` can always force a reload.
 - **Git/jj sources:** Inspect uncommitted work, a specific commit, branch comparisons via merge-base, or any `<from>..<to>` revision range.
@@ -107,6 +108,7 @@ Working tree and base comparisons keep a file-system watcher running so diffs re
 | `Enter`        | Focus diff |
 | `Space`        | Toggle viewed & auto-advance |
 | `{` / `}`      | Previous / next hunk |
+| `z`            | Toggle hunks-only / full-file view |
 | `Tab`, `1`, `2`| Switch focus |
 | `g` / `G`      | Jump to start / end |
 | `/`            | Open fuzzy filter |

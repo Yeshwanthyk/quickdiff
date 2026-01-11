@@ -4,6 +4,18 @@ All notable changes to quickdiff are documented here.
 
 ## [Unreleased]
 
+## [0.7.5] - 2025-01-12
+
+### Added
+- **Hunks-only view (default)**: Diff pane now shows only hunks with context lines by default—no more scrolling through unchanged code. Press `z` to toggle between hunks-only and full-file view.
+- Inline diff uses unicode word boundaries for better accuracy on non-ASCII identifiers.
+- Similarity gate: inline highlights are suppressed when lines share <20% content (completely different lines show as plain delete/insert).
+
+### Changed
+- Muted syntax colors in inline diff highlights are boosted to default text color for better contrast against accent backgrounds.
+
+## [0.7.4] - 2025-01-11
+
 ### Added
 - Jujutsu (jj) repository support with auto-detection, jj revsets, and jj-backed diffs.
 - `y` copies the selected file path to the system clipboard for quick sharing.
