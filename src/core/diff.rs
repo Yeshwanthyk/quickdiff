@@ -373,6 +373,11 @@ fn emit_paired_changes(
     }
 }
 
+/// Check if a string contains meaningful (non-whitespace) content.
+fn has_meaningful_content(s: &str) -> bool {
+    s.chars().any(|c| !c.is_whitespace())
+}
+
 /// Max line length for computing inline diff (skip for very long lines).
 const MAX_INLINE_DIFF_LEN: usize = 500;
 
@@ -389,12 +394,13 @@ fn compute_inline_diff(old: &str, new: &str) -> (Option<Vec<InlineSpan>>, Option
         return (None, None);
     }
 
-    let diff = TextDiff::from_words(old, new);
+    let diff = TextDiff::configure().diff_unicode_words(old, new);
 
     let mut old_spans = Vec::new();
     let mut new_spans = Vec::new();
     let mut old_pos = 0usize;
     let mut new_pos = 0usize;
+    let mut unchanged_len = 0usize;
 
     for change in diff.iter_all_changes() {
         let value = change.value();
@@ -402,6 +408,9 @@ fn compute_inline_diff(old: &str, new: &str) -> (Option<Vec<InlineSpan>>, Option
 
         match change.tag() {
             ChangeTag::Equal => {
+                if has_meaningful_content(value) {
+                    unchanged_len += value.trim().len();
+                }
                 // Unchanged content - exists in both
                 old_spans.push(InlineSpan {
                     start: old_pos,
@@ -435,6 +444,17 @@ fn compute_inline_diff(old: &str, new: &str) -> (Option<Vec<InlineSpan>>, Option
                 new_pos += len;
             }
         }
+    }
+
+    let total_len = old.trim().len().max(new.trim().len());
+    const MIN_UNCHANGED_RATIO: f64 = 0.20;
+    if total_len == 0 {
+        return (None, None);
+    }
+    let total_len_f = f64::from(u32::try_from(total_len).unwrap_or(0));
+    let unchanged_len_f = f64::from(u32::try_from(unchanged_len).unwrap_or(0));
+    if total_len_f == 0.0 || (unchanged_len_f / total_len_f) < MIN_UNCHANGED_RATIO {
+        return (None, None);
     }
 
     // Merge adjacent spans with same changed status for cleaner rendering
@@ -728,6 +748,53 @@ mod tests {
             .collect();
         assert_eq!(replaces.len(), 1);
         assert_eq!(deletes.len(), 2);
+    }
+
+    #[test]
+    fn inline_diff_similarity_gate() {
+        let old = TextBuffer::new(b"alpha beta gamma\n");
+        let new = TextBuffer::new(b"delta epsilon zeta\n");
+        let result = DiffResult::compute(&old, &new);
+
+        let replace = result
+            .rows
+            .iter()
+            .find(|r| r.kind == ChangeKind::Replace)
+            .unwrap();
+        assert!(replace.old.as_ref().unwrap().inline_spans.is_none());
+        assert!(replace.new.as_ref().unwrap().inline_spans.is_none());
+    }
+
+    #[test]
+    fn inline_diff_similarity_kept() {
+        let old = TextBuffer::new(b"let value = 1\n");
+        let new = TextBuffer::new(b"let value = 2\n");
+        let result = DiffResult::compute(&old, &new);
+
+        let replace = result
+            .rows
+            .iter()
+            .find(|r| r.kind == ChangeKind::Replace)
+            .unwrap();
+        let old_spans = replace.old.as_ref().unwrap().inline_spans.as_ref().unwrap();
+        let new_spans = replace.new.as_ref().unwrap().inline_spans.as_ref().unwrap();
+        assert!(old_spans.iter().any(|s| s.changed));
+        assert!(new_spans.iter().any(|s| s.changed));
+    }
+
+    #[test]
+    fn inline_diff_unicode_words() {
+        let old = TextBuffer::new("let cafe = \"naive\"\n".as_bytes());
+        let new = TextBuffer::new("let caf\u{00E9} = \"naive\"\n".as_bytes());
+        let result = DiffResult::compute(&old, &new);
+
+        let replace = result
+            .rows
+            .iter()
+            .find(|r| r.kind == ChangeKind::Replace)
+            .unwrap();
+        let new_spans = replace.new.as_ref().unwrap().inline_spans.as_ref().unwrap();
+        assert!(new_spans.iter().any(|s| s.changed));
     }
 
     #[test]
