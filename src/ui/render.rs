@@ -671,11 +671,38 @@ fn render_plain_span(
     }
 }
 
+fn is_muted_color(color: Color) -> bool {
+    match color {
+        Color::Rgb(r, g, b) => {
+            let luminance = (u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000;
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            let saturation = if max == 0 {
+                0
+            } else {
+                u32::from(max - min) * 100 / u32::from(max)
+            };
+            luminance < 140 || (luminance < 180 && saturation < 30)
+        }
+        Color::DarkGray | Color::Gray => true,
+        _ => false,
+    }
+}
+
+fn boost_muted_fg(fg: Color, default_fg: Color) -> Color {
+    if is_muted_color(fg) {
+        default_fg
+    } else {
+        fg
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_inline_span(
     builder: &mut SpanBuilder,
     text: &str,
-    base_style: Style,
+    fg: Color,
+    default_fg: Color,
     bg_color: Color,
     inline_bg: Color,
     inline_spans: &[InlineSpan],
@@ -700,7 +727,12 @@ fn render_inline_span(
             .iter()
             .any(|s| s.changed && byte_offset >= s.start && byte_offset < s.end);
         let bg = if is_changed { inline_bg } else { bg_color };
-        let style = base_style.bg(bg);
+        let active_fg = if is_changed {
+            boost_muted_fg(fg, default_fg)
+        } else {
+            fg
+        };
+        let style = Style::default().fg(active_fg).bg(bg);
 
         if ch == '\t' {
             let remaining = max_content.saturating_sub(*visible_len);
@@ -862,11 +894,11 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                         &mut visible_len,
                     );
                 } else if let Some(spans) = inline_spans {
-                    let base_style = Style::default().fg(fg);
                     render_inline_span(
                         &mut builder,
                         span_text,
-                        base_style,
+                        fg,
+                        app.theme.text_normal,
                         bg_color,
                         inline_bg,
                         spans,
