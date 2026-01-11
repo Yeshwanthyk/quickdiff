@@ -10,8 +10,10 @@ pub type CommentId = u64;
 /// Context in which a comment was created (which diff it refers to).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CommentContext {
     /// Legacy comments created before context scoping existed.
+    #[default]
     Unscoped,
     /// HEAD vs working tree.
     Worktree,
@@ -32,12 +34,6 @@ pub enum CommentContext {
         /// Ending commit.
         to: String,
     },
-}
-
-impl Default for CommentContext {
-    fn default() -> Self {
-        Self::Unscoped
-    }
 }
 
 impl CommentContext {

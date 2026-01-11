@@ -100,9 +100,10 @@ pub enum RepoError {
 pub struct InvalidRelPath(pub String);
 
 /// Source specification for diff comparison.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum DiffSource {
     /// Working tree changes vs parent (HEAD/@-).
+    #[default]
     WorkingTree,
     /// Single commit (show changes introduced by that commit).
     Commit(String),
@@ -124,12 +125,6 @@ pub enum DiffSource {
         /// Base branch name.
         base: String,
     },
-}
-
-impl Default for DiffSource {
-    fn default() -> Self {
-        Self::WorkingTree
-    }
 }
 
 impl DiffSource {
