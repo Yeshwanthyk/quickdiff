@@ -105,6 +105,52 @@ pub fn truncate_str(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Cached theme styles for render hot paths.
+#[derive(Debug, Clone)]
+pub struct ThemeStyles {
+    pub diff_delete: Style,
+    pub diff_insert: Style,
+    pub diff_equal: Style,
+    pub diff_empty: Style,
+    pub gutter_sep: Style,
+    pub text_faint: Style,
+    pub text_muted: Style,
+    pub text_dim: Style,
+    pub text_normal: Style,
+    pub text_bright: Style,
+    pub accent: Style,
+    pub border_focus: Style,
+    pub border_dim: Style,
+    pub pane_divider: Style,
+    pub bg_dark: Style,
+    pub bg_surface: Style,
+    pub bg_elevated: Style,
+}
+
+impl ThemeStyles {
+    pub fn from_theme(theme: &Theme) -> Self {
+        Self {
+            diff_delete: Style::default().bg(theme.diff_delete_bg),
+            diff_insert: Style::default().bg(theme.diff_insert_bg),
+            diff_equal: Style::default().bg(theme.bg_dark),
+            diff_empty: Style::default().bg(theme.diff_empty_bg),
+            gutter_sep: Style::default().fg(theme.gutter_sep),
+            text_faint: Style::default().fg(theme.text_faint),
+            text_muted: Style::default().fg(theme.text_muted),
+            text_dim: Style::default().fg(theme.text_dim),
+            text_normal: Style::default().fg(theme.text_normal),
+            text_bright: Style::default().fg(theme.text_bright),
+            accent: Style::default().fg(theme.accent),
+            border_focus: Style::default().fg(theme.accent),
+            border_dim: Style::default().fg(theme.border_dim),
+            pane_divider: Style::default().fg(theme.pane_divider),
+            bg_dark: Style::default().bg(theme.bg_dark),
+            bg_surface: Style::default().bg(theme.bg_surface),
+            bg_elevated: Style::default().bg(theme.bg_elevated),
+        }
+    }
+}
+
 /// Builder for efficient span construction.
 pub struct SpanBuilder {
     spans: Vec<Span<'static>>,
@@ -218,4 +264,24 @@ pub fn truncate_path(path: &str) -> String {
 /// Build a cache of truncated paths for sidebar display.
 pub fn build_path_cache<'a>(paths: impl Iterator<Item = &'a str>) -> Vec<String> {
     paths.map(truncate_path).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::Theme;
+
+    #[test]
+    fn theme_styles_match_theme_colors() {
+        let theme = Theme::builtin_default();
+        let styles = ThemeStyles::from_theme(&theme);
+
+        assert_eq!(styles.diff_delete.bg, Some(theme.diff_delete_bg));
+        assert_eq!(styles.diff_insert.bg, Some(theme.diff_insert_bg));
+        assert_eq!(styles.text_bright.fg, Some(theme.text_bright));
+        assert_eq!(styles.text_muted.fg, Some(theme.text_muted));
+        assert_eq!(styles.accent.fg, Some(theme.accent));
+        assert_eq!(styles.border_dim.fg, Some(theme.border_dim));
+        assert_eq!(styles.bg_dark.bg, Some(theme.bg_dark));
+    }
 }

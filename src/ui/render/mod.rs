@@ -13,7 +13,6 @@ mod sidebar;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::Style,
     widgets::Block,
     Frame,
 };
@@ -22,14 +21,16 @@ use super::app::{App, Mode};
 
 // Re-export for potential external use
 #[allow(unused_imports)]
-pub use helpers::{build_path_cache, SpanBuilder, GUTTER_WIDTH, SIDEBAR_PATH_WIDTH, TAB_WIDTH};
+pub use helpers::{
+    build_path_cache, SpanBuilder, ThemeStyles, GUTTER_WIDTH, SIDEBAR_PATH_WIDTH, TAB_WIDTH,
+};
 
 /// Main render function.
 pub fn render(frame: &mut Frame, app: &mut App) {
     let _timer = crate::metrics::Timer::start("render_frame");
 
     // Fill background
-    let bg_block = Block::default().style(Style::default().bg(app.theme.bg_dark));
+    let bg_block = Block::default().style(app.theme_styles.bg_dark);
     frame.render_widget(bg_block, frame.area());
 
     let chunks = Layout::default()

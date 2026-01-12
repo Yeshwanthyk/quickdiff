@@ -10,26 +10,25 @@ use ratatui::{
 
 use crate::core::{ChangeKind, InlineSpan};
 use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId, StyledSpan};
-use crate::theme::Theme;
 use crate::ui::app::{App, DiffPaneMode, Focus};
 
 use super::helpers::{
     boost_muted_fg, sanitize_char, spaces, style_to_color, visible_tab_spaces, SpanBuilder,
-    GUTTER_WIDTH,
+    ThemeStyles, GUTTER_WIDTH,
 };
 
 /// Render the diff view.
 pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
     let is_focused = app.focus == Focus::Diff;
-    let border_color = if is_focused {
-        app.theme.accent
+    let border_style = if is_focused {
+        app.theme_styles.border_focus
     } else {
-        app.theme.border_dim
+        app.theme_styles.border_dim
     };
     let title_style = if is_focused {
-        Style::default().fg(app.theme.accent)
+        app.theme_styles.accent
     } else {
-        Style::default().fg(app.theme.text_muted)
+        app.theme_styles.text_muted
     };
 
     let title = match app.viewer.pane_mode {
@@ -40,37 +39,35 @@ pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
+        .border_style(border_style)
         .title(Span::styled(title, title_style))
-        .style(Style::default().bg(app.theme.bg_dark));
+        .style(app.theme_styles.bg_dark);
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     // Handle empty states
-    if app.loading {
-        let msg = Paragraph::new("Loading diff…").style(Style::default().fg(app.theme.text_muted));
+    if app.diff_loading() {
+        let msg = Paragraph::new("Loading diff…").style(app.theme_styles.text_muted);
         frame.render_widget(msg, inner);
         return;
     }
 
     if app.is_binary {
-        let msg = Paragraph::new("Binary file — cannot display diff")
-            .style(Style::default().fg(app.theme.text_muted));
+        let msg =
+            Paragraph::new("Binary file — cannot display diff").style(app.theme_styles.text_muted);
         frame.render_widget(msg, inner);
         return;
     }
 
     let Some(diff) = &app.diff else {
-        let msg =
-            Paragraph::new("No diff to display").style(Style::default().fg(app.theme.text_muted));
+        let msg = Paragraph::new("No diff to display").style(app.theme_styles.text_muted);
         frame.render_widget(msg, inner);
         return;
     };
 
     if diff.rows().is_empty() || !diff.has_changes() {
-        let msg =
-            Paragraph::new("Files are identical").style(Style::default().fg(app.theme.text_muted));
+        let msg = Paragraph::new("Files are identical").style(app.theme_styles.text_muted);
         frame.render_widget(msg, inner);
         return;
     }
@@ -86,7 +83,7 @@ pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
                 ])
                 .split(inner);
             render_diff_pane(frame, app, panes[0], true);
-            render_pane_divider(frame, panes[1], &app.theme);
+            render_pane_divider(frame, panes[1], &app.theme_styles);
             render_diff_pane(frame, app, panes[2], false);
         }
         DiffPaneMode::OldOnly => {
@@ -99,11 +96,11 @@ pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render vertical divider between old/new panes.
-fn render_pane_divider(frame: &mut Frame, area: Rect, theme: &Theme) {
+fn render_pane_divider(frame: &mut Frame, area: Rect, styles: &ThemeStyles) {
     let lines: Vec<Line> = (0..area.height)
-        .map(|_| Line::from(Span::styled("│", Style::default().fg(theme.pane_divider))))
+        .map(|_| Line::from(Span::styled("│", styles.pane_divider)))
         .collect();
-    let para = Paragraph::new(lines).style(Style::default().bg(theme.bg_dark));
+    let para = Paragraph::new(lines).style(styles.bg_dark);
     frame.render_widget(para, area);
 }
 
@@ -253,6 +250,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     struct RenderedLine {
         line_num_str: String,
         bg_color: Color,
+        bg_style: Style,
         code_spans: Vec<Span<'static>>,
         visible_len: usize,
         has_comment: bool,
@@ -269,35 +267,59 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                 .hunk_at_row(row_idx)
                 .is_some_and(|h| app.commented_hunks.contains(&h));
         // Extract line info based on pane side
-        let (line_ref, bg_color, inline_bg) = if is_old {
+        let (line_ref, bg_color, inline_bg, bg_style) = if is_old {
             match (&row.old, row.kind) {
-                (Some(line), ChangeKind::Equal) => {
-                    (Some(line), app.theme.bg_dark, app.theme.bg_dark)
-                }
+                (Some(line), ChangeKind::Equal) => (
+                    Some(line),
+                    app.theme.bg_dark,
+                    app.theme.bg_dark,
+                    app.theme_styles.diff_equal,
+                ),
                 (Some(line), ChangeKind::Delete) | (Some(line), ChangeKind::Replace) => (
                     Some(line),
                     app.theme.diff_delete_bg,
                     app.theme.inline_delete_bg,
+                    app.theme_styles.diff_delete,
                 ),
-                (None, ChangeKind::Insert) => {
-                    (None, app.theme.diff_empty_bg, app.theme.diff_empty_bg)
-                }
-                _ => (None, app.theme.bg_dark, app.theme.bg_dark),
+                (None, ChangeKind::Insert) => (
+                    None,
+                    app.theme.diff_empty_bg,
+                    app.theme.diff_empty_bg,
+                    app.theme_styles.diff_empty,
+                ),
+                _ => (
+                    None,
+                    app.theme.bg_dark,
+                    app.theme.bg_dark,
+                    app.theme_styles.diff_equal,
+                ),
             }
         } else {
             match (&row.new, row.kind) {
-                (Some(line), ChangeKind::Equal) => {
-                    (Some(line), app.theme.bg_dark, app.theme.bg_dark)
-                }
+                (Some(line), ChangeKind::Equal) => (
+                    Some(line),
+                    app.theme.bg_dark,
+                    app.theme.bg_dark,
+                    app.theme_styles.diff_equal,
+                ),
                 (Some(line), ChangeKind::Insert) | (Some(line), ChangeKind::Replace) => (
                     Some(line),
                     app.theme.diff_insert_bg,
                     app.theme.inline_insert_bg,
+                    app.theme_styles.diff_insert,
                 ),
-                (None, ChangeKind::Delete) => {
-                    (None, app.theme.diff_empty_bg, app.theme.diff_empty_bg)
-                }
-                _ => (None, app.theme.bg_dark, app.theme.bg_dark),
+                (None, ChangeKind::Delete) => (
+                    None,
+                    app.theme.diff_empty_bg,
+                    app.theme.diff_empty_bg,
+                    app.theme_styles.diff_empty,
+                ),
+                _ => (
+                    None,
+                    app.theme.bg_dark,
+                    app.theme.bg_dark,
+                    app.theme_styles.diff_equal,
+                ),
             }
         };
 
@@ -394,6 +416,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         rendered.push(RenderedLine {
             line_num_str,
             bg_color,
+            bg_style,
             code_spans,
             visible_len,
             has_comment,
@@ -419,6 +442,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     // Render sticky header if present
     if let Some(scope) = sticky_scope {
         let sticky_bg = app.theme.bg_elevated;
+        let sticky_bg_style = app.theme_styles.bg_elevated;
         let mut spans: Vec<Span> = Vec::new();
 
         // Build display text: "kind name" (e.g., "fn compute_diff")
@@ -433,37 +457,28 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             let text_len = display_text.chars().count();
             let padding = max_content.saturating_sub(text_len);
             if padding > 0 {
-                spans.push(Span::styled(
-                    spaces(padding),
-                    Style::default().bg(sticky_bg),
-                ));
+                spans.push(Span::styled(spaces(padding), sticky_bg_style));
             }
             spans.push(Span::styled(
                 display_text,
-                Style::default()
-                    .fg(app.theme.text_muted)
+                app.theme_styles
+                    .text_muted
                     .bg(sticky_bg)
                     .add_modifier(Modifier::ITALIC),
             ));
             // Gutter
-            spans.push(Span::styled(" ", Style::default().bg(sticky_bg)));
-            spans.push(Span::styled(
-                "│",
-                Style::default().fg(app.theme.gutter_sep).bg(sticky_bg),
-            ));
-            spans.push(Span::styled("    ", Style::default().bg(sticky_bg)));
+            spans.push(Span::styled(" ", sticky_bg_style));
+            spans.push(Span::styled("│", app.theme_styles.gutter_sep.bg(sticky_bg)));
+            spans.push(Span::styled("    ", sticky_bg_style));
         } else {
             // NEW pane: left-align with gutter
-            spans.push(Span::styled("    ", Style::default().bg(sticky_bg)));
-            spans.push(Span::styled(
-                "│",
-                Style::default().fg(app.theme.gutter_sep).bg(sticky_bg),
-            ));
-            spans.push(Span::styled(" ", Style::default().bg(sticky_bg)));
+            spans.push(Span::styled("    ", sticky_bg_style));
+            spans.push(Span::styled("│", app.theme_styles.gutter_sep.bg(sticky_bg)));
+            spans.push(Span::styled(" ", sticky_bg_style));
             spans.push(Span::styled(
                 display_text.clone(),
-                Style::default()
-                    .fg(app.theme.text_muted)
+                app.theme_styles
+                    .text_muted
                     .bg(sticky_bg)
                     .add_modifier(Modifier::ITALIC),
             ));
@@ -471,10 +486,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             let text_len = display_text.chars().count();
             let trailing = max_content.saturating_sub(text_len);
             if trailing > 0 {
-                spans.push(Span::styled(
-                    spaces(trailing),
-                    Style::default().bg(sticky_bg),
-                ));
+                spans.push(Span::styled(spaces(trailing), sticky_bg_style));
             }
         }
 
@@ -489,59 +501,50 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
 
         if is_old {
             if common_left_pad > 0 {
-                spans.push(Span::styled(
-                    spaces(common_left_pad),
-                    Style::default().bg(row.bg_color),
-                ));
+                spans.push(Span::styled(spaces(common_left_pad), row.bg_style));
             }
             spans.extend(row.code_spans);
             let trailing = max_content
                 .saturating_sub(common_left_pad)
                 .saturating_sub(row.visible_len);
             if trailing > 0 {
-                spans.push(Span::styled(
-                    spaces(trailing),
-                    Style::default().bg(row.bg_color),
-                ));
+                spans.push(Span::styled(spaces(trailing), row.bg_style));
             }
             let marker_char = if row.has_comment { "•" } else { " " };
             let marker_style = if row.has_comment {
-                Style::default().fg(app.theme.accent).bg(row.bg_color)
+                app.theme_styles.accent.bg(row.bg_color)
             } else {
-                Style::default().bg(row.bg_color)
+                row.bg_style
             };
             spans.push(Span::styled(marker_char, marker_style));
             spans.push(Span::styled(
                 "│",
-                Style::default().fg(app.theme.gutter_sep).bg(row.bg_color),
+                app.theme_styles.gutter_sep.bg(row.bg_color),
             ));
             spans.push(Span::styled(
                 row.line_num_str,
-                Style::default().fg(app.theme.text_faint).bg(row.bg_color),
+                app.theme_styles.text_faint.bg(row.bg_color),
             ));
         } else {
             spans.push(Span::styled(
                 row.line_num_str,
-                Style::default().fg(app.theme.text_faint).bg(row.bg_color),
+                app.theme_styles.text_faint.bg(row.bg_color),
             ));
             spans.push(Span::styled(
                 "│",
-                Style::default().fg(app.theme.gutter_sep).bg(row.bg_color),
+                app.theme_styles.gutter_sep.bg(row.bg_color),
             ));
             let marker_char = if row.has_comment { "•" } else { " " };
             let marker_style = if row.has_comment {
-                Style::default().fg(app.theme.accent).bg(row.bg_color)
+                app.theme_styles.accent.bg(row.bg_color)
             } else {
-                Style::default().bg(row.bg_color)
+                row.bg_style
             };
             spans.push(Span::styled(marker_char, marker_style));
             spans.extend(row.code_spans);
             let trailing = max_content.saturating_sub(row.visible_len);
             if trailing > 0 {
-                spans.push(Span::styled(
-                    spaces(trailing),
-                    Style::default().bg(row.bg_color),
-                ));
+                spans.push(Span::styled(spaces(trailing), row.bg_style));
             }
         }
 

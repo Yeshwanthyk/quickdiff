@@ -26,7 +26,7 @@ use crossterm::{
 };
 use shell_words::split;
 
-use super::render::build_path_cache;
+use super::render::{build_path_cache, ThemeStyles};
 use super::worker::{
     spawn_diff_worker, spawn_pr_worker, DiffLoadRequest, DiffLoadResponse, DiffWorker, PrRequest,
     PrResponse, PrWorker,
@@ -162,6 +162,39 @@ pub struct UiState {
     pub dirty: bool,
 }
 
+/// Background worker state.
+struct WorkerState {
+    diff: DiffWorker,
+    next_request_id: u64,
+    pending_request_id: Option<u64>,
+    queued_request: Option<DiffLoadRequest>,
+    loading: bool,
+    pr_worker: PrWorker,
+    next_pr_request_id: u64,
+    pending_pr_list_id: Option<u64>,
+    pending_pr_load_id: Option<u64>,
+    pending_pr: Option<crate::core::PullRequest>,
+    watcher: Option<RepoWatcher>,
+}
+
+impl WorkerState {
+    fn new(repo: &RepoRoot) -> Self {
+        Self {
+            diff: spawn_diff_worker(repo.clone()),
+            next_request_id: 1,
+            pending_request_id: None,
+            queued_request: None,
+            loading: false,
+            pr_worker: spawn_pr_worker(repo.clone()),
+            next_pr_request_id: 1,
+            pending_pr_list_id: None,
+            pending_pr_load_id: None,
+            pending_pr: None,
+            watcher: None,
+        }
+    }
+}
+
 /// Pull request mode state.
 #[derive(Debug, Default)]
 pub struct PrState {
@@ -216,13 +249,8 @@ pub struct App {
     /// Should the app quit?
     pub should_quit: bool,
 
-    // Background diff loading
-    worker: DiffWorker,
-    next_request_id: u64,
-    pending_request_id: Option<u64>,
-    queued_request: Option<DiffLoadRequest>,
-    /// Whether a diff is currently being loaded.
-    pub loading: bool,
+    /// Background worker state.
+    worker: WorkerState,
 
     // Diff state (lazy loaded)
     /// Current file's diff result.
@@ -264,23 +292,14 @@ pub struct App {
     // Theme
     /// Current color theme.
     pub theme: Theme,
+    /// Cached theme styles for rendering.
+    pub theme_styles: ThemeStyles,
     /// Available theme names for selector.
     pub theme_list: Vec<String>,
     /// Selected index in theme selector.
     pub theme_selector_idx: usize,
     /// Original theme name (for cancel).
     pub theme_original: String,
-
-    // File watching
-    /// File system watcher for live reload.
-    watcher: Option<RepoWatcher>,
-
-    // PR worker state
-    pr_worker: PrWorker,
-    next_pr_request_id: u64,
-    pending_pr_list_id: Option<u64>,
-    pending_pr_load_id: Option<u64>,
-    pending_pr: Option<crate::core::PullRequest>,
 
     /// PR mode state.
     pub pr: PrState,
@@ -353,6 +372,7 @@ impl App {
         theme_name: Option<&str>,
     ) -> anyhow::Result<Self> {
         let theme = Theme::load(theme_name.unwrap_or("default"));
+        let theme_styles = ThemeStyles::from_theme(&theme);
         // Canonicalize commit/range sources so comment contexts match across invocations.
         let source = match source {
             DiffSource::Commit(commit) => {
@@ -392,8 +412,7 @@ impl App {
 
         let open_comment_counts = load_open_comment_counts(&repo, &comment_context);
 
-        let worker = spawn_diff_worker(repo.clone());
-        let pr_worker = spawn_pr_worker(repo.clone());
+        let worker = WorkerState::new(&repo);
 
         let mut app = Self {
             repo,
@@ -410,10 +429,6 @@ impl App {
             commented_hunks: HashSet::new(),
             should_quit: false,
             worker,
-            next_request_id: 1,
-            pending_request_id: None,
-            queued_request: None,
-            loading: false,
             diff: None,
             old_buffer: None,
             new_buffer: None,
@@ -436,15 +451,10 @@ impl App {
             old_scopes: Vec::new(),
             new_scopes: Vec::new(),
             theme,
+            theme_styles,
             theme_list: Theme::list(),
             theme_selector_idx: 0,
             theme_original: theme_name.unwrap_or("default").to_string(),
-            watcher: None,
-            pr_worker,
-            next_pr_request_id: 1,
-            pending_pr_list_id: None,
-            pending_pr_load_id: None,
-            pending_pr: None,
             pr: PrState::default(),
         };
 
@@ -454,7 +464,7 @@ impl App {
         // Initialize file watcher for live-reload modes (WorkingTree, Base)
         if matches!(app.source, DiffSource::WorkingTree | DiffSource::Base(_)) {
             match RepoWatcher::new(&app.repo) {
-                Ok(w) => app.watcher = Some(w),
+                Ok(w) => app.worker.watcher = Some(w),
                 Err(e) => {
                     // Non-fatal: just log and continue without watching
                     eprintln!("Warning: file watching disabled: {}", e);
@@ -489,9 +499,17 @@ impl App {
         self.files.get(self.sidebar.selected_idx)
     }
 
+    pub(crate) fn diff_loading(&self) -> bool {
+        self.worker.loading
+    }
+
     /// Rebuild the cached truncated paths for sidebar.
     fn rebuild_path_cache(&mut self) {
         self.sidebar.path_cache = build_path_cache(self.files.iter().map(|f| f.path.as_str()));
+    }
+
+    fn rebuild_theme_styles(&mut self) {
+        self.theme_styles = ThemeStyles::from_theme(&self.theme);
     }
 
     fn refresh_current_file_comment_markers(&mut self) {
@@ -555,11 +573,11 @@ impl App {
             self.viewer.hunk_view_rows.clear();
             self.old_buffer = None;
             self.new_buffer = None;
-            self.pending_request_id = None;
-            self.queued_request = None;
+            self.worker.pending_request_id = None;
+            self.worker.queued_request = None;
             self.old_highlights.clear();
             self.new_highlights.clear();
-            self.loading = false;
+            self.worker.loading = false;
             return;
         };
 
@@ -582,10 +600,10 @@ impl App {
         self.viewer.scroll_y = 0;
         self.viewer.scroll_x = 0;
 
-        let id = self.next_request_id;
-        self.next_request_id = self.next_request_id.wrapping_add(1);
-        self.pending_request_id = Some(id);
-        self.loading = true;
+        let id = self.worker.next_request_id;
+        self.worker.next_request_id = self.worker.next_request_id.wrapping_add(1);
+        self.worker.pending_request_id = Some(id);
+        self.worker.loading = true;
         self.ui.dirty = true;
 
         let req = DiffLoadRequest {
@@ -607,29 +625,29 @@ impl App {
     }
 
     fn enqueue_diff_request(&mut self, req: DiffLoadRequest) -> bool {
-        let Some(tx) = self.worker.request_tx.as_ref() else {
+        let Some(tx) = self.worker.diff.request_tx.as_ref() else {
             self.ui.error = Some("Diff worker stopped".to_string());
-            self.loading = false;
-            self.pending_request_id = None;
-            self.queued_request = None;
+            self.worker.loading = false;
+            self.worker.pending_request_id = None;
+            self.worker.queued_request = None;
             self.ui.dirty = true;
             return false;
         };
 
         match tx.try_send(req) {
             Ok(()) => {
-                self.queued_request = None;
+                self.worker.queued_request = None;
                 true
             }
             Err(TrySendError::Full(req)) => {
-                self.queued_request = Some(req);
+                self.worker.queued_request = Some(req);
                 true
             }
             Err(TrySendError::Disconnected(_)) => {
                 self.ui.error = Some("Diff worker stopped".to_string());
-                self.loading = false;
-                self.pending_request_id = None;
-                self.queued_request = None;
+                self.worker.loading = false;
+                self.worker.pending_request_id = None;
+                self.worker.queued_request = None;
                 self.ui.dirty = true;
                 false
             }
@@ -637,7 +655,7 @@ impl App {
     }
 
     fn flush_queued_diff_request(&mut self) {
-        let Some(req) = self.queued_request.take() else {
+        let Some(req) = self.worker.queued_request.take() else {
             return;
         };
 
@@ -645,13 +663,13 @@ impl App {
     }
 
     fn send_pr_request(&mut self, req: PrRequest) -> bool {
-        let Some(tx) = self.pr_worker.request_tx.as_ref() else {
+        let Some(tx) = self.worker.pr_worker.request_tx.as_ref() else {
             self.ui.error = Some("PR worker stopped".to_string());
             self.pr.loading = false;
-            self.loading = false;
-            self.pending_pr_list_id = None;
-            self.pending_pr_load_id = None;
-            self.pending_pr = None;
+            self.worker.loading = false;
+            self.worker.pending_pr_list_id = None;
+            self.worker.pending_pr_load_id = None;
+            self.worker.pending_pr = None;
             self.ui.dirty = true;
             return false;
         };
@@ -659,10 +677,10 @@ impl App {
         if tx.send(req).is_err() {
             self.ui.error = Some("PR worker stopped".to_string());
             self.pr.loading = false;
-            self.loading = false;
-            self.pending_pr_list_id = None;
-            self.pending_pr_load_id = None;
-            self.pending_pr = None;
+            self.worker.loading = false;
+            self.worker.pending_pr_list_id = None;
+            self.worker.pending_pr_load_id = None;
+            self.worker.pending_pr = None;
             self.ui.dirty = true;
             return false;
         }
@@ -672,7 +690,7 @@ impl App {
 
     /// Apply any completed diff loads.
     pub fn poll_worker(&mut self) {
-        while let Ok(msg) = self.worker.response_rx.try_recv() {
+        while let Ok(msg) = self.worker.diff.response_rx.try_recv() {
             match msg {
                 DiffLoadResponse::Loaded {
                     id,
@@ -681,12 +699,12 @@ impl App {
                     diff,
                     is_binary,
                 } => {
-                    if self.pending_request_id != Some(id) {
+                    if self.worker.pending_request_id != Some(id) {
                         continue;
                     }
 
-                    self.pending_request_id = None;
-                    self.loading = false;
+                    self.worker.pending_request_id = None;
+                    self.worker.loading = false;
                     self.ui.error = None;
 
                     self.is_binary = is_binary;
@@ -726,12 +744,12 @@ impl App {
                     self.ui.dirty = true;
                 }
                 DiffLoadResponse::Error { id, message } => {
-                    if self.pending_request_id != Some(id) {
+                    if self.worker.pending_request_id != Some(id) {
                         continue;
                     }
 
-                    self.pending_request_id = None;
-                    self.loading = false;
+                    self.worker.pending_request_id = None;
+                    self.worker.loading = false;
                     self.diff = None;
                     self.viewer.hunk_view_rows.clear();
                     self.old_buffer = None;
@@ -750,14 +768,14 @@ impl App {
 
     /// Apply any completed PR loads.
     pub fn poll_pr_worker(&mut self) {
-        while let Ok(msg) = self.pr_worker.response_rx.try_recv() {
+        while let Ok(msg) = self.worker.pr_worker.response_rx.try_recv() {
             match msg {
                 PrResponse::List { id, prs } => {
-                    if self.pending_pr_list_id != Some(id) {
+                    if self.worker.pending_pr_list_id != Some(id) {
                         continue;
                     }
 
-                    self.pending_pr_list_id = None;
+                    self.worker.pending_pr_list_id = None;
                     self.pr.list = prs;
                     self.pr.loading = false;
                     self.ui.error = None;
@@ -769,27 +787,32 @@ impl App {
                     self.ui.dirty = true;
                 }
                 PrResponse::ListError { id, message } => {
-                    if self.pending_pr_list_id != Some(id) {
+                    if self.worker.pending_pr_list_id != Some(id) {
                         continue;
                     }
 
-                    self.pending_pr_list_id = None;
+                    self.worker.pending_pr_list_id = None;
                     self.pr.list.clear();
                     self.pr.loading = false;
                     self.ui.error = Some(format!("Failed to fetch PRs: {}", message));
                     self.ui.dirty = true;
                 }
                 PrResponse::Diff { id, diff } => {
-                    if self.pending_pr_load_id != Some(id) {
+                    if self.worker.pending_pr_load_id != Some(id) {
                         continue;
                     }
 
-                    self.pending_pr_load_id = None;
+                    self.worker.pending_pr_load_id = None;
                     self.pr.loading = false;
-                    self.loading = false;
+                    self.worker.loading = false;
                     self.ui.error = None;
 
-                    let pr = match self.pending_pr.take().or_else(|| self.pr.current.clone()) {
+                    let pr = match self
+                        .worker
+                        .pending_pr
+                        .take()
+                        .or_else(|| self.pr.current.clone())
+                    {
                         Some(pr) => pr,
                         None => {
                             self.ui.error = Some("No PR selected".to_string());
@@ -836,14 +859,14 @@ impl App {
                     self.ui.dirty = true;
                 }
                 PrResponse::DiffError { id, message } => {
-                    if self.pending_pr_load_id != Some(id) {
+                    if self.worker.pending_pr_load_id != Some(id) {
                         continue;
                     }
 
-                    self.pending_pr_load_id = None;
-                    self.pending_pr = None;
+                    self.worker.pending_pr_load_id = None;
+                    self.worker.pending_pr = None;
                     self.pr.loading = false;
-                    self.loading = false;
+                    self.worker.loading = false;
                     self.ui.error = Some(format!("Failed to load PR diff: {}", message));
                     self.ui.dirty = true;
                 }
@@ -1781,6 +1804,7 @@ impl App {
     pub fn close_theme_selector(&mut self) {
         // Restore original theme
         self.theme = Theme::load(&self.theme_original);
+        self.rebuild_theme_styles();
         self.ui.mode = Mode::Normal;
         self.ui.dirty = true;
     }
@@ -1791,6 +1815,7 @@ impl App {
             self.theme_selector_idx -= 1;
             // Live preview
             self.theme = Theme::load(&self.theme_list[self.theme_selector_idx]);
+            self.rebuild_theme_styles();
             self.ui.dirty = true;
         }
     }
@@ -1801,6 +1826,7 @@ impl App {
             self.theme_selector_idx += 1;
             // Live preview
             self.theme = Theme::load(&self.theme_list[self.theme_selector_idx]);
+            self.rebuild_theme_styles();
             self.ui.dirty = true;
         }
     }
@@ -1820,7 +1846,7 @@ impl App {
     ///
     /// Returns `true` if files changed and refresh is needed.
     pub fn poll_watcher(&mut self) -> bool {
-        let Some(ref watcher) = self.watcher else {
+        let Some(ref watcher) = self.worker.watcher else {
             return false;
         };
 
@@ -1944,15 +1970,15 @@ impl App {
         self.pr.loading = true;
         self.ui.error = None;
 
-        let id = self.next_pr_request_id;
-        self.next_pr_request_id = self.next_pr_request_id.wrapping_add(1);
-        self.pending_pr_list_id = Some(id);
+        let id = self.worker.next_pr_request_id;
+        self.worker.next_pr_request_id = self.worker.next_pr_request_id.wrapping_add(1);
+        self.worker.pending_pr_list_id = Some(id);
 
         if !self.send_pr_request(PrRequest::List {
             id,
             filter: self.pr.filter,
         }) {
-            self.pending_pr_list_id = None;
+            self.worker.pending_pr_list_id = None;
             self.pr.loading = false;
         }
 
@@ -1966,7 +1992,7 @@ impl App {
         self.pr.picker_selected = 0;
         self.pr.picker_scroll = 0;
         self.pr.loading = false;
-        self.pending_pr_list_id = None;
+        self.worker.pending_pr_list_id = None;
         self.ui.dirty = true;
     }
 
@@ -2019,15 +2045,15 @@ impl App {
     /// Load a specific PR's diff.
     pub fn load_pr(&mut self, pr: crate::core::PullRequest) {
         self.pr.loading = true;
-        self.loading = true;
+        self.worker.loading = true;
         self.ui.error = None;
         self.ui.mode = Mode::Normal;
         self.ui.dirty = true;
 
-        let id = self.next_pr_request_id;
-        self.next_pr_request_id = self.next_pr_request_id.wrapping_add(1);
-        self.pending_pr_load_id = Some(id);
-        self.pending_pr = Some(pr.clone());
+        let id = self.worker.next_pr_request_id;
+        self.worker.next_pr_request_id = self.worker.next_pr_request_id.wrapping_add(1);
+        self.worker.pending_pr_load_id = Some(id);
+        self.worker.pending_pr = Some(pr.clone());
 
         self.pr.active = true;
         self.pr.current = Some(pr.clone());
@@ -2055,10 +2081,10 @@ impl App {
             id,
             pr_number: pr.number,
         }) {
-            self.pending_pr_load_id = None;
-            self.pending_pr = None;
+            self.worker.pending_pr_load_id = None;
+            self.worker.pending_pr = None;
             self.pr.loading = false;
-            self.loading = false;
+            self.worker.loading = false;
         }
     }
 
@@ -2133,7 +2159,7 @@ impl App {
 
         self.viewer.scroll_x = 0;
         self.ui.error = None;
-        self.loading = false;
+        self.worker.loading = false;
         self.ui.dirty = true;
     }
 
@@ -2146,10 +2172,10 @@ impl App {
         self.pr.active = false;
         self.pr.current = None;
         self.pr.files.clear();
-        self.pending_pr_load_id = None;
-        self.pending_pr = None;
+        self.worker.pending_pr_load_id = None;
+        self.worker.pending_pr = None;
         self.pr.loading = false;
-        self.loading = false;
+        self.worker.loading = false;
         self.source = DiffSource::WorkingTree;
 
         // Reload working tree files
@@ -2464,5 +2490,24 @@ rename to new.rs
             view_rows[mapped_last],
             second.start_row + second.row_count - 1
         );
+    }
+
+    #[test]
+    fn worker_state_initializes_defaults() {
+        let repo = RepoRoot::discover(std::path::Path::new(".")).unwrap();
+        let worker = WorkerState::new(&repo);
+
+        assert_eq!(worker.next_request_id, 1);
+        assert!(worker.pending_request_id.is_none());
+        assert!(worker.queued_request.is_none());
+        assert!(!worker.loading);
+        assert!(worker.diff.request_tx.is_some());
+
+        assert_eq!(worker.next_pr_request_id, 1);
+        assert!(worker.pending_pr_list_id.is_none());
+        assert!(worker.pending_pr_load_id.is_none());
+        assert!(worker.pending_pr.is_none());
+        assert!(worker.pr_worker.request_tx.is_some());
+        assert!(worker.watcher.is_none());
     }
 }
