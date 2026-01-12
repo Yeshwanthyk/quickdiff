@@ -17,6 +17,7 @@
 pub mod cli;
 pub mod core;
 pub mod highlight;
+pub mod metrics;
 pub mod prelude;
 pub mod theme;
 pub mod ui;

@@ -84,6 +84,9 @@ fn main() -> ExitCode {
     // Parse CLI args
     let cli = Cli::parse();
 
+    // Initialize metrics if enabled
+    quickdiff::metrics::init();
+
     // Determine diff source
     let source = parse_diff_source(&cli);
 

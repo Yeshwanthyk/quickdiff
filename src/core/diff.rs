@@ -94,11 +94,13 @@ impl DiffResult {
     /// assert_eq!(diff.hunks().len(), 1);
     /// ```
     pub fn compute(old: &TextBuffer, new: &TextBuffer) -> Self {
+        let _timer = crate::metrics::Timer::start("diff_compute");
         compute_diff(old, new, 3) // 3 lines of context by default
     }
 
     /// Compute diff with custom context lines.
     pub fn compute_with_context(old: &TextBuffer, new: &TextBuffer, context: usize) -> Self {
+        let _timer = crate::metrics::Timer::start("diff_compute_with_context");
         compute_diff(old, new, context)
     }
 
