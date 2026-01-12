@@ -2,7 +2,7 @@
 
 mod app;
 mod input;
-pub mod render;
+mod render;
 mod worker;
 
 pub use app::{App, Mode};
