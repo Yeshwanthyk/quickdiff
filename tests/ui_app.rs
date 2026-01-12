@@ -2,45 +2,81 @@ use git2::{IndexAddOption, Repository, Signature};
 use quickdiff::core::{DiffSource, RepoRoot};
 use quickdiff::ui::{App, Mode};
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+
+#[cfg(unix)]
+use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 const FILE_ALPHA: &str = "alpha.txt";
 const FILE_RUST: &str = "src/lib.rs";
 const FILE_NOTES: &str = "docs/notes.md";
 
-fn ensure_test_config_dir() -> &'static std::path::PathBuf {
-    static CONFIG_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
-    CONFIG_DIR.get_or_init(|| {
-        let base = std::env::temp_dir().join(format!("quickdiff-ui-tests-{}", std::process::id()));
-        std::fs::create_dir_all(&base).unwrap();
-        let config_dir = base.join(".config");
-        std::fs::create_dir_all(&config_dir).unwrap();
-        std::env::set_var("HOME", &base);
-        std::env::set_var("XDG_CONFIG_HOME", &config_dir);
-        config_dir
-    })
+static ENV_GUARD: Mutex<()> = Mutex::new(());
+
+struct TestEnv {
+    _guard: MutexGuard<'static, ()>,
+    prev_home: Option<String>,
+    prev_xdg: Option<String>,
+    #[allow(dead_code)]
+    home_dir: TempDir,
 }
 
-fn reset_persistent_state() {
-    let config_dir = ensure_test_config_dir().clone();
-    let quickdiff_dir = config_dir.join("quickdiff");
-    let _ = std::fs::remove_dir_all(&quickdiff_dir);
+impl TestEnv {
+    fn new() -> Self {
+        let guard = ENV_GUARD.lock().unwrap();
+        let prev_home = std::env::var("HOME").ok();
+        let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        let home_dir = TempDir::new().unwrap();
+        std::env::set_var("HOME", home_dir.path());
+        std::env::set_var("XDG_CONFIG_HOME", home_dir.path());
+        Self {
+            _guard: guard,
+            prev_home,
+            prev_xdg,
+            home_dir,
+        }
+    }
+}
+
+impl Drop for TestEnv {
+    fn drop(&mut self) {
+        if let Some(prev) = &self.prev_home {
+            std::env::set_var("HOME", prev);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        if let Some(prev) = &self.prev_xdg {
+            std::env::set_var("XDG_CONFIG_HOME", prev);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+    }
 }
 
 struct RepoHarness {
+    _env: TestEnv,
     _dir: TempDir,
     repo: RepoRoot,
 }
 
 impl RepoHarness {
     fn new() -> Self {
-        reset_persistent_state();
+        let env = TestEnv::new();
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let repo = RepoRoot::discover(dir.path()).unwrap();
-        Self { _dir: dir, repo }
+        Self {
+            _env: env,
+            _dir: dir,
+            repo,
+        }
     }
 
     fn app(&self) -> App {
@@ -53,6 +89,129 @@ impl RepoHarness {
         .unwrap()
     }
 }
+
+#[cfg(unix)]
+struct GhFixture {
+    dir: TempDir,
+    log_path: PathBuf,
+    prev_path: Option<String>,
+    prev_data_dir: Option<String>,
+}
+
+#[cfg(unix)]
+impl GhFixture {
+    fn new() -> Self {
+        let dir = TempDir::new().unwrap();
+        let script_path = dir.path().join("gh");
+        std::fs::write(&script_path, GH_SCRIPT).unwrap();
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).unwrap();
+
+        let log_path = dir.path().join("gh.log");
+        std::fs::write(&log_path, "").unwrap();
+
+        let prev_path = std::env::var("PATH").ok();
+        let new_path = match &prev_path {
+            Some(path) if !path.is_empty() => format!("{}:{}", dir.path().display(), path),
+            _ => dir.path().display().to_string(),
+        };
+        std::env::set_var("PATH", &new_path);
+
+        let prev_data_dir = std::env::var("QUICKDIFF_TEST_GH_DIR").ok();
+        std::env::set_var("QUICKDIFF_TEST_GH_DIR", dir.path());
+
+        Self {
+            dir,
+            log_path,
+            prev_path,
+            prev_data_dir,
+        }
+    }
+
+    fn write_pr_list(&self, value: serde_json::Value) {
+        let path = self.dir.path().join("pr_list.json");
+        let content = serde_json::to_string(&value).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    fn write_diff(&self, number: u32, patch: &str) {
+        let path = self.dir.path().join(format!("diff_{}.patch", number));
+        std::fs::write(path, patch).unwrap();
+    }
+
+    fn log_lines(&self) -> Vec<String> {
+        let content = std::fs::read_to_string(&self.log_path).unwrap_or_default();
+        content
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for GhFixture {
+    fn drop(&mut self) {
+        if let Some(prev) = &self.prev_path {
+            std::env::set_var("PATH", prev);
+        } else {
+            std::env::remove_var("PATH");
+        }
+
+        if let Some(prev) = &self.prev_data_dir {
+            std::env::set_var("QUICKDIFF_TEST_GH_DIR", prev);
+        } else {
+            std::env::remove_var("QUICKDIFF_TEST_GH_DIR");
+        }
+    }
+}
+
+#[cfg(unix)]
+const GH_SCRIPT: &str = r#"#!/bin/bash
+set -euo pipefail
+BASE="${QUICKDIFF_TEST_GH_DIR:?}"
+LOG="$BASE/gh.log"
+CMD="${1:-}"
+shift || true
+case "$CMD" in
+  auth)
+    SUB="${1:-}"
+    if [[ "$SUB" == "status" ]]; then
+      exit 0
+    fi
+    ;;
+  pr)
+    ACTION="${1:-}"
+    shift || true
+    case "$ACTION" in
+      list)
+        cat "$BASE/pr_list.json"
+        exit 0
+        ;;
+      diff)
+        PRNUM="${1:-}"
+        cat "$BASE/diff_${PRNUM}.patch"
+        exit 0
+        ;;
+      review)
+        PRNUM="${1:-}"
+        shift || true
+        echo "review ${PRNUM} $*" >> "$LOG"
+        exit 0
+        ;;
+      view)
+        PRNUM="${1:-}"
+        echo "view ${PRNUM}" >> "$LOG"
+        exit 0
+        ;;
+    esac
+    ;;
+esac
+
+echo "unexpected gh invocation: cmd=${CMD} args=$*" >> "$LOG"
+exit 1
+"#;
 
 fn init_repo(path: &Path) {
     let repo = Repository::init(path).unwrap();
@@ -101,6 +260,32 @@ fn wait_for_diff(app: &mut App) {
         std::thread::sleep(Duration::from_millis(10));
     }
     panic!("diff load timed out");
+}
+
+#[cfg(unix)]
+fn wait_for_pr_list(app: &mut App) {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        app.poll_pr_worker();
+        if !app.pr.loading && !app.pr.list.is_empty() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("pr list timed out");
+}
+
+#[cfg(unix)]
+fn wait_for_pr_loaded(app: &mut App) {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        app.poll_pr_worker();
+        if !app.pr.loading && app.pr.active && !app.files.is_empty() && app.diff.is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("pr diff timed out");
 }
 
 fn select_file(app: &mut App, path: &str) {
@@ -197,4 +382,118 @@ fn diff_view_toggle_preserves_position() {
     app.toggle_diff_view_mode();
     assert_eq!(app.viewer.scroll_y, initial_row);
     assert!(after_toggle <= initial_row || app.diff.is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn pr_picker_loads_pr_and_diff() {
+    let harness = RepoHarness::new();
+    let gh = GhFixture::new();
+    gh.write_pr_list(json!([
+        {
+            "number": 7,
+            "title": "Update alpha",
+            "headRefName": "feature/alpha",
+            "baseRefName": "main",
+            "author": {"login": "alice"},
+            "additions": 3,
+            "deletions": 1,
+            "changedFiles": 1,
+            "isDraft": false
+        }
+    ]));
+    gh.write_diff(
+        7,
+        r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+-pub fn meaning() -> i32 {
+-    41
+-}
++pub fn meaning() -> i32 {
++    42
++}
+"#,
+    );
+
+    let mut app = harness.app();
+    app.open_pr_picker();
+    wait_for_pr_list(&mut app);
+    assert_eq!(app.pr.list.len(), 1);
+    assert_eq!(app.ui.mode, Mode::PRPicker);
+    app.pr_picker_select();
+    wait_for_pr_loaded(&mut app);
+    assert!(app.pr.active);
+    assert!(matches!(
+        app.source,
+        DiffSource::PullRequest { number: 7, .. }
+    ));
+    assert_eq!(app.files.len(), 1);
+    assert_eq!(app.files[0].path.as_str(), "src/lib.rs");
+    assert!(app.diff.is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn pr_actions_issue_commands() {
+    let harness = RepoHarness::new();
+    let gh = GhFixture::new();
+    gh.write_pr_list(json!([
+        {
+            "number": 9,
+            "title": "Review me",
+            "headRefName": "feature/pr",
+            "baseRefName": "main",
+            "author": {"login": "bob"},
+            "additions": 2,
+            "deletions": 1,
+            "changedFiles": 1,
+            "isDraft": false
+        }
+    ]));
+    gh.write_diff(
+        9,
+        r#"diff --git a/docs/notes.md b/docs/notes.md
+--- a/docs/notes.md
++++ b/docs/notes.md
+@@ -1,3 +1,3 @@
+-# Notes
+-
+-Original
++# Notes
++
++Updated body
+"#,
+    );
+
+    let mut app = harness.app();
+    app.open_pr_picker();
+    wait_for_pr_list(&mut app);
+    app.pr_picker_select();
+    wait_for_pr_loaded(&mut app);
+
+    app.start_pr_approve();
+    app.submit_pr_action();
+
+    app.start_pr_comment();
+    app.pr.action_text = "thanks".into();
+    app.submit_pr_action();
+
+    app.start_pr_request_changes();
+    app.pr.action_text = "redo".into();
+    app.submit_pr_action();
+
+    assert_eq!(app.ui.mode, Mode::Normal);
+    assert!(app.pr.action_type.is_none());
+
+    let log = gh.log_lines();
+    assert_eq!(
+        log,
+        vec![
+            "review 9 --approve",
+            "review 9 --comment -b thanks",
+            "review 9 --request-changes -b redo"
+        ]
+    );
 }
