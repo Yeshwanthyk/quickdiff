@@ -22,7 +22,7 @@ use super::app::{App, Mode};
 
 // Re-export for potential external use
 #[allow(unused_imports)]
-pub use helpers::{SpanBuilder, GUTTER_WIDTH, SIDEBAR_PATH_WIDTH, TAB_WIDTH};
+pub use helpers::{build_path_cache, SpanBuilder, GUTTER_WIDTH, SIDEBAR_PATH_WIDTH, TAB_WIDTH};
 
 /// Main render function.
 pub fn render(frame: &mut Frame, app: &mut App) {

@@ -227,4 +227,19 @@ mod tests {
         let buf = TextBuffer::new(b"hello world\n");
         assert!(!buf.is_binary());
     }
+    #[test]
+    fn binary_detection_nul_in_first_8kb() {
+        // NUL in first 8KB = binary
+        let mut content = vec![b'a'; 4000];
+        content.push(0);
+        content.extend(vec![b'b'; 4000]);
+        let buf = TextBuffer::new(&content);
+        assert!(buf.is_binary());
+
+        // NUL after 8KB = not binary (text with trailing garbage)
+        let mut content = vec![b'a'; 9000];
+        content.push(0);
+        let buf = TextBuffer::new(&content);
+        assert!(!buf.is_binary());
+    }
 }

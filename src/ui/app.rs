@@ -26,6 +26,7 @@ use crossterm::{
 };
 use shell_words::split;
 
+use super::render::build_path_cache;
 use super::worker::{
     spawn_diff_worker, spawn_pr_worker, DiffLoadRequest, DiffLoadResponse, DiffWorker, PrRequest,
     PrResponse, PrWorker,
@@ -114,6 +115,8 @@ pub struct SidebarState {
     pub filter: String,
     /// Filtered file indices (empty = show all).
     pub filtered_indices: Vec<usize>,
+    /// Cached truncated paths for sidebar display.
+    pub path_cache: Vec<String>,
 }
 
 /// Diff viewer viewport state.
@@ -445,6 +448,9 @@ impl App {
             pr: PrState::default(),
         };
 
+        // Build path cache for sidebar
+        app.rebuild_path_cache();
+
         // Initialize file watcher for live-reload modes (WorkingTree, Base)
         if matches!(app.source, DiffSource::WorkingTree | DiffSource::Base(_)) {
             match RepoWatcher::new(&app.repo) {
@@ -481,6 +487,11 @@ impl App {
     /// Get the currently selected file.
     pub fn selected_file(&self) -> Option<&ChangedFile> {
         self.files.get(self.sidebar.selected_idx)
+    }
+
+    /// Rebuild the cached truncated paths for sidebar.
+    fn rebuild_path_cache(&mut self) {
+        self.sidebar.path_cache = build_path_cache(self.files.iter().map(|f| f.path.as_str()));
     }
 
     fn refresh_current_file_comment_markers(&mut self) {
@@ -798,6 +809,7 @@ impl App {
                         })
                         .collect();
 
+                    self.rebuild_path_cache();
                     self.pr.files = pr_files;
                     self.pr.active = true;
                     self.pr.current = Some(pr.clone());
@@ -1857,6 +1869,7 @@ impl App {
 
         // Update file list
         self.files = files;
+        self.rebuild_path_cache();
 
         // Restore selection if file still exists
         if let Some(ref path) = current_path {
@@ -2143,6 +2156,7 @@ impl App {
         match list_changed_files(&self.repo) {
             Ok(files) => {
                 self.files = files;
+                self.rebuild_path_cache();
                 self.sidebar.selected_idx = 0;
                 if !self.files.is_empty() {
                     self.request_current_diff();

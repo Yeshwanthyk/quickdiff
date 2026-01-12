@@ -11,7 +11,7 @@ use ratatui::{
 use crate::core::{FileChangeKind, ViewedStore};
 use crate::ui::app::{App, Focus};
 
-use super::helpers::SIDEBAR_PATH_WIDTH;
+// SIDEBAR_PATH_WIDTH import removed - using cached paths
 
 /// Render the file list sidebar.
 pub fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -153,16 +153,13 @@ pub fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
             ("  ".to_string(), app.theme.text_faint)
         };
 
-        // Ellipsize path (char-safe for UTF-8)
-        let path = file.path.as_str();
-        let char_count = path.chars().count();
-        let display_path = if char_count > SIDEBAR_PATH_WIDTH {
-            let skip = char_count - SIDEBAR_PATH_WIDTH + 1;
-            let truncated: String = path.chars().skip(skip).collect();
-            format!("…{}", truncated)
-        } else {
-            path.to_string()
-        };
+        // Use cached truncated path
+        let display_path = app
+            .sidebar
+            .path_cache
+            .get(idx)
+            .map(String::as_str)
+            .unwrap_or(file.path.as_str());
 
         // Text brightness based on state
         let text_color = if is_selected {

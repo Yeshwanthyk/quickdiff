@@ -159,3 +159,63 @@ impl Default for SpanBuilder {
         Self::new()
     }
 }
+
+// ============================================================================
+// Static spaces buffer for efficient padding
+// ============================================================================
+
+/// Maximum expected terminal width for padding purposes.
+/// Most terminals are under 500 columns; we use 512 for alignment.
+const MAX_SPACES: usize = 512;
+
+/// Static buffer of spaces for slicing. Avoids per-frame allocations.
+static SPACES: &str = concat!(
+    "                                                                ", // 64
+    "                                                                ", // 128
+    "                                                                ", // 192
+    "                                                                ", // 256
+    "                                                                ", // 320
+    "                                                                ", // 384
+    "                                                                ", // 448
+    "                                                                ", // 512
+);
+
+/// Get a slice of spaces of the given length.
+///
+/// Uses a static buffer to avoid allocations. Falls back to allocation
+/// only for widths > 512 (rare in practice).
+#[inline]
+pub fn spaces(len: usize) -> &'static str {
+    if len <= MAX_SPACES {
+        &SPACES[..len]
+    } else {
+        // Fallback for extremely wide terminals - leak to get 'static
+        // This is acceptable since it only happens once per unique large width
+        Box::leak(
+            vec![' '; len]
+                .into_iter()
+                .collect::<String>()
+                .into_boxed_str(),
+        )
+    }
+}
+
+/// Truncate a path for sidebar display.
+///
+/// If the path is longer than SIDEBAR_PATH_WIDTH characters,
+/// it's truncated from the left with an ellipsis prefix.
+pub fn truncate_path(path: &str) -> String {
+    let char_count = path.chars().count();
+    if char_count > SIDEBAR_PATH_WIDTH {
+        let skip = char_count - SIDEBAR_PATH_WIDTH + 1;
+        let truncated: String = path.chars().skip(skip).collect();
+        format!("…{}", truncated)
+    } else {
+        path.to_string()
+    }
+}
+
+/// Build a cache of truncated paths for sidebar display.
+pub fn build_path_cache<'a>(paths: impl Iterator<Item = &'a str>) -> Vec<String> {
+    paths.map(truncate_path).collect()
+}

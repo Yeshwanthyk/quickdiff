@@ -1005,7 +1005,7 @@ wc -l src/ui/app.rs  # Target: <2000 lines
 ### Changes
 
 #### 4.1 Reuse spaces buffer in render_diff_pane
-- [ ] Edit `src/ui/render/diff.rs` - hoist spaces allocation:
+- [x] Edit `src/ui/render/diff.rs` - hoist spaces allocation:
 
 **Before (repeated per call):**
 ```rust
@@ -1032,14 +1032,14 @@ fn get_spaces(len: usize) -> String {
 ```
 
 #### 4.2 Cache truncated filenames
-- [ ] Add cache to `SidebarState`:
+- [x] Add cache to `SidebarState`:
 
 ```rust
 /// Cached truncated paths (invalidated on file list change).
 pub path_cache: Vec<String>,
 ```
 
-- [ ] Populate on file list load, reuse in render
+- [x] Populate on file list load, reuse in render
 
 #### 4.3 Precompute style lookups
 - [ ] Create a `ThemeStyles` struct that caches common style combinations:
@@ -1081,7 +1081,7 @@ QUICKDIFF_METRICS=1 cargo run -- 2>&1 | grep render_frame
 ### Changes
 
 #### 5.1 Add large file handling test
-- [ ] Create `tests/large_file.rs`:
+- [x] Create `tests/large_file.rs`:
 
 ```rust
 //! Integration tests for large file handling.
@@ -1119,7 +1119,7 @@ fn diff_large_file_completes_in_reasonable_time() {
 ```
 
 #### 5.2 Add binary detection test
-- [ ] Add to `src/core/text.rs` tests:
+- [x] Add to `src/core/text.rs` tests:
 
 ```rust
 #[test]
@@ -1140,7 +1140,7 @@ fn binary_detection_nul_in_first_8kb() {
 ```
 
 #### 5.3 Create ARCHITECTURE.md
-- [ ] Create `ARCHITECTURE.md`:
+- [x] Create `ARCHITECTURE.md`:
 
 ```markdown
 # Quickdiff Architecture

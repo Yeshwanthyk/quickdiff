@@ -14,7 +14,8 @@ use crate::theme::Theme;
 use crate::ui::app::{App, DiffPaneMode, Focus};
 
 use super::helpers::{
-    boost_muted_fg, sanitize_char, style_to_color, visible_tab_spaces, SpanBuilder, GUTTER_WIDTH,
+    boost_muted_fg, sanitize_char, spaces, style_to_color, visible_tab_spaces, SpanBuilder,
+    GUTTER_WIDTH,
 };
 
 /// Render the diff view.
@@ -248,7 +249,6 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     let sticky_height = if has_sticky { 1 } else { 0 };
     let content_height = (area.height as usize).saturating_sub(sticky_height);
     let max_content = (area.width as usize).saturating_sub(GUTTER_WIDTH);
-    let spaces = " ".repeat(max_content);
 
     struct RenderedLine {
         line_num_str: String,
@@ -434,7 +434,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             let padding = max_content.saturating_sub(text_len);
             if padding > 0 {
                 spans.push(Span::styled(
-                    &spaces[..padding],
+                    spaces(padding),
                     Style::default().bg(sticky_bg),
                 ));
             }
@@ -472,7 +472,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             let trailing = max_content.saturating_sub(text_len);
             if trailing > 0 {
                 spans.push(Span::styled(
-                    &spaces[..trailing],
+                    spaces(trailing),
                     Style::default().bg(sticky_bg),
                 ));
             }
@@ -490,7 +490,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         if is_old {
             if common_left_pad > 0 {
                 spans.push(Span::styled(
-                    &spaces[..common_left_pad],
+                    spaces(common_left_pad),
                     Style::default().bg(row.bg_color),
                 ));
             }
@@ -500,7 +500,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                 .saturating_sub(row.visible_len);
             if trailing > 0 {
                 spans.push(Span::styled(
-                    &spaces[..trailing],
+                    spaces(trailing),
                     Style::default().bg(row.bg_color),
                 ));
             }
@@ -539,7 +539,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             let trailing = max_content.saturating_sub(row.visible_len);
             if trailing > 0 {
                 spans.push(Span::styled(
-                    &spaces[..trailing],
+                    spaces(trailing),
                     Style::default().bg(row.bg_color),
                 ));
             }
