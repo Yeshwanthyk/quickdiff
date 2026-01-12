@@ -131,6 +131,10 @@ fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
             app.start_pr_request_changes();
             true
         }
+        KeyCode::Char('O') if app.pr_mode => {
+            app.open_pr_in_browser();
+            true
+        }
         KeyCode::Char('j') | KeyCode::Down => {
             app.scroll_diff(1, 0);
             true

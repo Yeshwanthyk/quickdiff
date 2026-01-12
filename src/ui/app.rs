@@ -2142,6 +2142,30 @@ impl App {
         }
     }
 
+    /// Open the current PR in browser.
+    pub fn open_pr_in_browser(&mut self) {
+        let Some(pr) = &self.current_pr else {
+            self.error_msg = Some("No PR selected".to_string());
+            self.dirty = true;
+            return;
+        };
+
+        let pr_number = pr.number;
+        let repo_path = self.repo.path().to_path_buf();
+
+        match crate::core::open_pr_in_browser(&repo_path, pr_number) {
+            Ok(()) => {
+                self.status_msg = Some(format!("Opened PR #{} in browser", pr_number));
+                self.error_msg = None;
+            }
+            Err(e) => {
+                self.error_msg = Some(format!("Failed to open PR: {}", e));
+            }
+        }
+
+        self.dirty = true;
+    }
+
     // ========================================================================
     // PR Actions
     // ========================================================================

@@ -243,6 +243,22 @@ pub fn request_changes_pr(
     Ok(())
 }
 
+/// Open a PR in the browser.
+pub fn open_pr_in_browser(repo_path: &std::path::Path, pr_number: u32) -> Result<(), GhError> {
+    let pr_num_str = pr_number.to_string();
+    let output = Command::new("gh")
+        .args(["pr", "view", &pr_num_str, "--web"])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(GhError::ApiError(stderr.trim().to_string()));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

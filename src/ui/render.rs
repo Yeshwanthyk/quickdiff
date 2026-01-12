@@ -1334,6 +1334,7 @@ fn render_help_overlay(frame: &mut Frame, app: &App) {
         ("P", "Open PR picker / exit PR mode"),
         ("A", "Approve PR (in PR mode)"),
         ("R", "Request changes (in PR mode)"),
+        ("O", "Open PR in browser (in PR mode)"),
         ("?", "Close this help overlay"),
         ("q or Ctrl+C", "Quit quickdiff"),
     ];
@@ -1629,8 +1630,8 @@ fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     let pr_hints: &[(&str, &str)] = if app.pr_mode {
         &[
             ("A", "approve"),
-            ("C", "comment"),
             ("R", "req-chg"),
+            ("O", "open"),
             ("P", "exit PR"),
         ]
     } else {
