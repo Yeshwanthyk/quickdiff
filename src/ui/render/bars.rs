@@ -31,7 +31,7 @@ pub fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     )];
 
     // PR badge if in PR mode
-    if let Some(ref pr) = app.current_pr {
+    if let Some(ref pr) = app.pr.current {
         spans.push(Span::styled(
             format!(" PR #{} ", pr.number),
             Style::default()
@@ -139,7 +139,7 @@ pub fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
 /// Render the bottom bar with mode-specific hints.
 pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Input mode
-    if app.mode == Mode::AddComment {
+    if app.ui.mode == Mode::AddComment {
         let line = Line::from(vec![
             Span::styled(
                 " Comment: ",
@@ -148,7 +148,7 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
                     .bg(app.theme.bg_elevated),
             ),
             Span::styled(
-                &app.draft_comment,
+                &app.comments.draft,
                 Style::default()
                     .fg(app.theme.text_bright)
                     .bg(app.theme.bg_elevated),
@@ -172,11 +172,11 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Filter mode
-    if app.mode == Mode::FilterFiles {
-        let match_count = if app.sidebar_filter.is_empty() {
+    if app.ui.mode == Mode::FilterFiles {
+        let match_count = if app.sidebar.filter.is_empty() {
             app.files.len()
         } else {
-            app.filtered_indices.len()
+            app.sidebar.filtered_indices.len()
         };
         let match_info = format!(" ({}/{})", match_count, app.files.len());
         let line = Line::from(vec![
@@ -187,7 +187,7 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
                     .bg(app.theme.bg_elevated),
             ),
             Span::styled(
-                &app.sidebar_filter,
+                &app.sidebar.filter,
                 Style::default()
                     .fg(app.theme.text_bright)
                     .bg(app.theme.bg_elevated),
@@ -217,7 +217,7 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Theme selector mode
-    if app.mode == Mode::SelectTheme {
+    if app.ui.mode == Mode::SelectTheme {
         let line = Line::from(vec![
             Span::styled(
                 " Theme ",
@@ -238,8 +238,8 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Comments overlay mode
-    if app.mode == Mode::ViewComments {
-        let scope = if app.viewing_include_resolved {
+    if app.ui.mode == Mode::ViewComments {
+        let scope = if app.comments.include_resolved {
             "all"
         } else {
             "open"
@@ -264,7 +264,7 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Error message
-    if let Some(ref err) = app.error_msg {
+    if let Some(ref err) = app.ui.error {
         let line = Line::from(vec![
             Span::styled(
                 " ✗ ",
@@ -285,7 +285,7 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Status message
-    if let Some(ref msg) = app.status_msg {
+    if let Some(ref msg) = app.ui.status {
         let line = Line::from(vec![
             Span::styled(
                 " ✓ ",
@@ -326,7 +326,7 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     // PR mode hints
-    let pr_hints: &[(&str, &str)] = if app.pr_mode {
+    let pr_hints: &[(&str, &str)] = if app.pr.active {
         &[
             ("A", "approve"),
             ("R", "req-chg"),

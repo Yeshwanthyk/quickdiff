@@ -31,7 +31,7 @@ pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(app.theme.text_muted)
     };
 
-    let title = match app.diff_pane_mode {
+    let title = match app.viewer.pane_mode {
         DiffPaneMode::Both => " Diff ",
         DiffPaneMode::OldOnly => " Diff (old only) ",
         DiffPaneMode::NewOnly => " Diff (new only) ",
@@ -74,7 +74,7 @@ pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    match app.diff_pane_mode {
+    match app.viewer.pane_mode {
         DiffPaneMode::Both => {
             let panes = Layout::default()
                 .direction(Direction::Horizontal)
@@ -232,7 +232,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         &app.new_scopes
     };
     let first_row = app
-        .view_row_to_diff_row(app.scroll_y)
+        .view_row_to_diff_row(app.viewer.scroll_y)
         .and_then(|row_idx| diff.rows().get(row_idx));
     let first_line_num = first_row.and_then(|row| {
         if is_old {
@@ -332,7 +332,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                 _ => std::slice::from_ref(&default_span),
             };
 
-            let scroll_x = app.scroll_x;
+            let scroll_x = app.viewer.scroll_x;
             let mut col_pos = 0usize;
 
             for hl in hl_spans {

@@ -17,7 +17,7 @@ pub fn handle_input(app: &mut App, event: Event) -> bool {
 /// Handle a key event.
 fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     // Handle input modes first
-    match app.mode {
+    match app.ui.mode {
         Mode::AddComment => return handle_add_comment_key(app, key),
         Mode::ViewComments => return handle_view_comments_key(app, key),
         Mode::FilterFiles => return handle_filter_key(app, key),
@@ -75,7 +75,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             return true;
         }
         KeyCode::Char('P') => {
-            if !app.pr_mode {
+            if !app.pr.active {
                 app.open_pr_picker();
             } else {
                 app.exit_pr_mode();
@@ -123,15 +123,15 @@ fn handle_sidebar_key(app: &mut App, key: KeyEvent) -> bool {
 fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         // PR actions (only in PR mode)
-        KeyCode::Char('A') if app.pr_mode => {
+        KeyCode::Char('A') if app.pr.active => {
             app.start_pr_approve();
             true
         }
-        KeyCode::Char('R') if app.pr_mode => {
+        KeyCode::Char('R') if app.pr.active => {
             app.start_pr_request_changes();
             true
         }
-        KeyCode::Char('O') if app.pr_mode => {
+        KeyCode::Char('O') if app.pr.active => {
             app.open_pr_in_browser();
             true
         }
@@ -174,12 +174,12 @@ fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('G') => {
             // Go to end
             let max_scroll = app.view_row_count();
-            app.scroll_y = max_scroll.saturating_sub(1);
+            app.viewer.scroll_y = max_scroll.saturating_sub(1);
             true
         }
         KeyCode::Char('g') => {
             // Go to start
-            app.scroll_y = 0;
+            app.viewer.scroll_y = 0;
             true
         }
         KeyCode::Char('c') if app.is_worktree_mode() => {
@@ -214,12 +214,12 @@ fn handle_add_comment_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Backspace => {
-            app.draft_comment.pop();
+            app.comments.draft.pop();
             app.mark_dirty();
             true
         }
         KeyCode::Char(c) => {
-            app.draft_comment.push(c);
+            app.comments.draft.push(c);
             app.mark_dirty();
             true
         }
@@ -270,12 +270,12 @@ fn handle_filter_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Backspace => {
-            app.sidebar_filter.pop();
+            app.sidebar.filter.pop();
             app.update_filter_live();
             true
         }
         KeyCode::Char(c) => {
-            app.sidebar_filter.push(c);
+            app.sidebar.filter.push(c);
             app.update_filter_live();
             true
         }
@@ -327,7 +327,7 @@ const SIDEBAR_WIDTH: u16 = 32;
 /// Handle a mouse event.
 fn handle_mouse(app: &mut App, event: MouseEvent) -> bool {
     // Don't handle mouse in modal modes
-    if !matches!(app.mode, Mode::Normal) {
+    if !matches!(app.ui.mode, Mode::Normal) {
         return false;
     }
 
@@ -389,19 +389,19 @@ fn handle_click(app: &mut App, x: u16, y: u16) {
         // Sidebar inner area starts at y=2 (top bar + border)
         if y >= 2 && (1..SIDEBAR_WIDTH - 1).contains(&x) {
             let row_in_sidebar = (y - 2) as usize;
-            let clicked_visible_idx = app.sidebar_scroll + row_in_sidebar;
+            let clicked_visible_idx = app.sidebar.scroll + row_in_sidebar;
 
             // Get visible files
-            let visible: Vec<usize> = if app.filtered_indices.is_empty() {
+            let visible: Vec<usize> = if app.sidebar.filtered_indices.is_empty() {
                 (0..app.files.len()).collect()
             } else {
-                app.filtered_indices.clone()
+                app.sidebar.filtered_indices.clone()
             };
 
             if clicked_visible_idx < visible.len() {
                 let file_idx = visible[clicked_visible_idx];
-                if file_idx != app.selected_idx {
-                    app.selected_idx = file_idx;
+                if file_idx != app.sidebar.selected_idx {
+                    app.sidebar.selected_idx = file_idx;
                     app.request_current_diff();
                 }
             }
@@ -459,13 +459,13 @@ fn handle_pr_action_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char(c) => {
-            app.pr_action_text.push(c);
-            app.dirty = true;
+            app.pr.action_text.push(c);
+            app.ui.dirty = true;
             true
         }
         KeyCode::Backspace => {
-            app.pr_action_text.pop();
-            app.dirty = true;
+            app.pr.action_text.pop();
+            app.ui.dirty = true;
             true
         }
         _ => false,

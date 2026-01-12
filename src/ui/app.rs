@@ -72,9 +72,10 @@ pub enum PRActionType {
 }
 
 /// Layout mode for diff panes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DiffPaneMode {
     /// Show both old and new panes.
+    #[default]
     Both,
     /// Show only the old (left) pane full-width.
     OldOnly,
@@ -102,6 +103,87 @@ pub struct CommentViewItem {
     pub stale: bool,
 }
 
+/// Sidebar navigation and filter state.
+#[derive(Debug, Default)]
+pub struct SidebarState {
+    /// Currently selected file index.
+    pub selected_idx: usize,
+    /// Scroll offset (first visible file).
+    pub scroll: usize,
+    /// Filter query string.
+    pub filter: String,
+    /// Filtered file indices (empty = show all).
+    pub filtered_indices: Vec<usize>,
+}
+
+/// Diff viewer viewport state.
+#[derive(Debug, Default)]
+pub struct ViewerState {
+    /// Vertical scroll offset.
+    pub scroll_y: usize,
+    /// Horizontal scroll offset.
+    pub scroll_x: usize,
+    /// View mode (hunks-only vs full file).
+    pub view_mode: DiffViewMode,
+    /// Pane layout mode.
+    pub pane_mode: DiffPaneMode,
+    /// Precomputed hunk view rows.
+    pub hunk_view_rows: Vec<usize>,
+}
+
+/// Comment viewing/editing state.
+#[derive(Debug, Default)]
+pub struct CommentsState {
+    /// Draft comment text.
+    pub draft: String,
+    /// Comments being viewed.
+    pub viewing: Vec<CommentViewItem>,
+    /// Selected index in view.
+    pub selected: usize,
+    /// Scroll offset in view.
+    pub scroll: usize,
+    /// Include resolved comments.
+    pub include_resolved: bool,
+}
+
+/// UI mode and message state.
+#[derive(Debug, Default)]
+pub struct UiState {
+    /// Current mode.
+    pub mode: Mode,
+    /// Error message.
+    pub error: Option<String>,
+    /// Status message.
+    pub status: Option<String>,
+    /// Dirty flag for redraw.
+    pub dirty: bool,
+}
+
+/// Pull request mode state.
+#[derive(Debug, Default)]
+pub struct PrState {
+    /// Whether in PR mode.
+    pub active: bool,
+    /// Current PR.
+    pub current: Option<crate::core::PullRequest>,
+    /// PR file list.
+    pub files: Vec<crate::core::PRChangedFile>,
+    /// Available PRs.
+    pub list: Vec<crate::core::PullRequest>,
+    /// Loading state.
+    pub loading: bool,
+    /// Filter for PR list.
+    pub filter: crate::core::PRFilter,
+    /// Picker selection.
+    pub picker_selected: usize,
+    /// Picker scroll.
+    pub picker_scroll: usize,
+    /// Action text.
+    pub action_text: String,
+    /// Action type.
+    pub action_type: Option<PRActionType>,
+}
+
 /// Application state.
 pub struct App {
     /// Repository root.
@@ -116,10 +198,8 @@ pub struct App {
     pub files: Vec<ChangedFile>,
     /// File path filter (only show this file if set).
     pub file_filter: Option<String>,
-    /// Currently selected file index in sidebar.
-    pub selected_idx: usize,
-    /// Sidebar scroll offset (first visible file index).
-    pub sidebar_scroll: usize,
+    /// Sidebar state.
+    pub sidebar: SidebarState,
     /// Current focus.
     pub focus: Focus,
     /// Viewed state store.
@@ -151,40 +231,16 @@ pub struct App {
     /// Whether current file is binary.
     pub is_binary: bool,
 
-    // Viewport state
-    /// Vertical scroll offset in diff view.
-    pub scroll_y: usize,
-    /// Horizontal scroll offset in diff view.
-    pub scroll_x: usize,
-    /// Diff view mode (hunks-only vs full file).
-    pub diff_view_mode: DiffViewMode,
-    hunk_view_rows: Vec<usize>,
+    /// Viewer state (scroll, view mode).
+    pub viewer: ViewerState,
 
-    // UI state
-    /// Current UI mode.
-    pub mode: Mode,
-    /// Draft comment text (when in AddComment mode).
-    pub draft_comment: String,
-    /// Comments to display in ViewComments mode.
-    pub viewing_comments: Vec<CommentViewItem>,
-    /// Selected index in comment list.
-    pub viewing_comments_selected: usize,
-    /// Scroll offset in comment list.
-    pub viewing_comments_scroll: usize,
-    /// Whether to include resolved comments.
-    pub viewing_include_resolved: bool,
-    /// Sidebar filter query (when in FilterFiles mode).
-    pub sidebar_filter: String,
-    /// Filtered file indices (empty = show all).
-    pub filtered_indices: Vec<usize>,
+    /// UI state (mode, messages).
+    pub ui: UiState,
+    /// Comments state.
+    pub comments: CommentsState,
+
     /// Fuzzy matcher for file filtering.
     fuzzy_matcher: FuzzyMatcher,
-    /// Last error message to display.
-    pub error_msg: Option<String>,
-    /// Status message to display (non-error).
-    pub status_msg: Option<String>,
-    /// Whether the UI needs redrawing.
-    pub dirty: bool,
 
     // Highlighting
     /// Syntax highlighter cache.
@@ -211,8 +267,6 @@ pub struct App {
     pub theme_selector_idx: usize,
     /// Original theme name (for cancel).
     pub theme_original: String,
-    /// Current diff pane layout mode.
-    pub diff_pane_mode: DiffPaneMode,
 
     // File watching
     /// File system watcher for live reload.
@@ -225,27 +279,8 @@ pub struct App {
     pending_pr_load_id: Option<u64>,
     pending_pr: Option<crate::core::PullRequest>,
 
-    // PR mode state
-    /// Whether we're in PR review mode.
-    pub pr_mode: bool,
-    /// Current PR if in PR mode.
-    pub current_pr: Option<crate::core::PullRequest>,
-    /// PR file list (parsed from diff).
-    pub pr_files: Vec<crate::core::PRChangedFile>,
-    /// Available PRs for picker.
-    pub pr_list: Vec<crate::core::PullRequest>,
-    /// Loading state for PR operations.
-    pub pr_loading: bool,
-    /// PR picker filter.
-    pub pr_filter: crate::core::PRFilter,
-    /// Selected index in PR picker.
-    pub pr_picker_selected: usize,
-    /// Scroll offset in PR picker.
-    pub pr_picker_scroll: usize,
-    /// PR action draft text.
-    pub pr_action_text: String,
-    /// PR action type being composed.
-    pub pr_action_type: Option<PRActionType>,
+    /// PR mode state.
+    pub pr: PrState,
 }
 
 fn comment_context_for_source(source: &DiffSource) -> CommentContext {
@@ -364,8 +399,7 @@ impl App {
             comment_context,
             files,
             file_filter,
-            selected_idx: 0,
-            sidebar_scroll: 0,
+            sidebar: SidebarState::default(),
             focus: Focus::Sidebar,
             viewed,
             viewed_in_changeset,
@@ -381,22 +415,17 @@ impl App {
             old_buffer: None,
             new_buffer: None,
             is_binary: false,
-            scroll_y: 0,
-            scroll_x: 0,
-            diff_view_mode: DiffViewMode::HunksOnly,
-            hunk_view_rows: Vec::new(),
-            mode: Mode::default(),
-            draft_comment: String::new(),
-            viewing_comments: Vec::new(),
-            viewing_comments_selected: 0,
-            viewing_comments_scroll: 0,
-            viewing_include_resolved: false,
-            sidebar_filter: String::new(),
-            filtered_indices: Vec::new(),
+            viewer: ViewerState {
+                view_mode: DiffViewMode::HunksOnly,
+                pane_mode: DiffPaneMode::Both,
+                ..Default::default()
+            },
+            ui: UiState {
+                dirty: true,
+                ..Default::default()
+            },
+            comments: CommentsState::default(),
             fuzzy_matcher: FuzzyMatcher::new(),
-            error_msg: None,
-            status_msg: None,
-            dirty: true,
             highlighter: HighlighterCache::new(),
             old_highlights: FileHighlightCache::new(),
             new_highlights: FileHighlightCache::new(),
@@ -407,23 +436,13 @@ impl App {
             theme_list: Theme::list(),
             theme_selector_idx: 0,
             theme_original: theme_name.unwrap_or("default").to_string(),
-            diff_pane_mode: DiffPaneMode::Both,
             watcher: None,
             pr_worker,
             next_pr_request_id: 1,
             pending_pr_list_id: None,
             pending_pr_load_id: None,
             pending_pr: None,
-            pr_mode: false,
-            current_pr: None,
-            pr_files: Vec::new(),
-            pr_list: Vec::new(),
-            pr_loading: false,
-            pr_filter: crate::core::PRFilter::default(),
-            pr_picker_selected: 0,
-            pr_picker_scroll: 0,
-            pr_action_text: String::new(),
-            pr_action_type: None,
+            pr: PrState::default(),
         };
 
         // Initialize file watcher for live-reload modes (WorkingTree, Base)
@@ -441,7 +460,7 @@ impl App {
         if matches!(app.source, DiffSource::WorkingTree) {
             if let Some(last) = app.viewed.last_selected() {
                 if let Some(idx) = app.files.iter().position(|f| f.path.as_str() == last) {
-                    app.selected_idx = idx;
+                    app.sidebar.selected_idx = idx;
                 }
             }
         }
@@ -461,7 +480,7 @@ impl App {
 
     /// Get the currently selected file.
     pub fn selected_file(&self) -> Option<&ChangedFile> {
-        self.files.get(self.selected_idx)
+        self.files.get(self.sidebar.selected_idx)
     }
 
     fn refresh_current_file_comment_markers(&mut self) {
@@ -510,19 +529,19 @@ impl App {
     /// Work is performed on a background thread. Call `poll_worker()` to apply results.
     pub fn request_current_diff(&mut self) {
         // PR mode uses patch-based diff extraction instead of git show
-        if self.pr_mode {
+        if self.pr.active {
             self.request_current_pr_diff();
             return;
         }
 
-        self.error_msg = None;
-        self.status_msg = None;
+        self.ui.error = None;
+        self.ui.status = None;
         self.is_binary = false;
         self.commented_hunks.clear();
 
         let Some(file) = self.selected_file().cloned() else {
             self.diff = None;
-            self.hunk_view_rows.clear();
+            self.viewer.hunk_view_rows.clear();
             self.old_buffer = None;
             self.new_buffer = None;
             self.pending_request_id = None;
@@ -542,21 +561,21 @@ impl App {
 
         // Clear existing state immediately so UI reflects selection changes.
         self.diff = None;
-        self.hunk_view_rows.clear();
+        self.viewer.hunk_view_rows.clear();
         self.old_buffer = None;
         self.new_buffer = None;
         self.old_scopes.clear();
         self.new_scopes.clear();
         self.old_highlights.clear();
         self.new_highlights.clear();
-        self.scroll_y = 0;
-        self.scroll_x = 0;
+        self.viewer.scroll_y = 0;
+        self.viewer.scroll_x = 0;
 
         let id = self.next_request_id;
         self.next_request_id = self.next_request_id.wrapping_add(1);
         self.pending_request_id = Some(id);
         self.loading = true;
-        self.dirty = true;
+        self.ui.dirty = true;
 
         let req = DiffLoadRequest {
             id,
@@ -578,11 +597,11 @@ impl App {
 
     fn enqueue_diff_request(&mut self, req: DiffLoadRequest) -> bool {
         let Some(tx) = self.worker.request_tx.as_ref() else {
-            self.error_msg = Some("Diff worker stopped".to_string());
+            self.ui.error = Some("Diff worker stopped".to_string());
             self.loading = false;
             self.pending_request_id = None;
             self.queued_request = None;
-            self.dirty = true;
+            self.ui.dirty = true;
             return false;
         };
 
@@ -596,11 +615,11 @@ impl App {
                 true
             }
             Err(TrySendError::Disconnected(_)) => {
-                self.error_msg = Some("Diff worker stopped".to_string());
+                self.ui.error = Some("Diff worker stopped".to_string());
                 self.loading = false;
                 self.pending_request_id = None;
                 self.queued_request = None;
-                self.dirty = true;
+                self.ui.dirty = true;
                 false
             }
         }
@@ -616,24 +635,24 @@ impl App {
 
     fn send_pr_request(&mut self, req: PrRequest) -> bool {
         let Some(tx) = self.pr_worker.request_tx.as_ref() else {
-            self.error_msg = Some("PR worker stopped".to_string());
-            self.pr_loading = false;
+            self.ui.error = Some("PR worker stopped".to_string());
+            self.pr.loading = false;
             self.loading = false;
             self.pending_pr_list_id = None;
             self.pending_pr_load_id = None;
             self.pending_pr = None;
-            self.dirty = true;
+            self.ui.dirty = true;
             return false;
         };
 
         if tx.send(req).is_err() {
-            self.error_msg = Some("PR worker stopped".to_string());
-            self.pr_loading = false;
+            self.ui.error = Some("PR worker stopped".to_string());
+            self.pr.loading = false;
             self.loading = false;
             self.pending_pr_list_id = None;
             self.pending_pr_load_id = None;
             self.pending_pr = None;
-            self.dirty = true;
+            self.ui.dirty = true;
             return false;
         }
 
@@ -657,7 +676,7 @@ impl App {
 
                     self.pending_request_id = None;
                     self.loading = false;
-                    self.error_msg = None;
+                    self.ui.error = None;
 
                     self.is_binary = is_binary;
                     self.old_buffer = Some(old_buffer.clone());
@@ -665,11 +684,11 @@ impl App {
                     self.diff = diff;
 
                     self.rebuild_view_rows();
-                    self.scroll_y = 0;
+                    self.viewer.scroll_y = 0;
                     if let Some(diff) = self.diff.as_ref() {
                         if let Some(first) = diff.hunks().first() {
                             if let Some(view_row) = self.diff_row_to_view_row(first.start_row) {
-                                self.scroll_y = view_row;
+                                self.viewer.scroll_y = view_row;
                             }
                         }
                     }
@@ -693,7 +712,7 @@ impl App {
                     }
 
                     self.refresh_current_file_comment_markers();
-                    self.dirty = true;
+                    self.ui.dirty = true;
                 }
                 DiffLoadResponse::Error { id, message } => {
                     if self.pending_request_id != Some(id) {
@@ -703,14 +722,14 @@ impl App {
                     self.pending_request_id = None;
                     self.loading = false;
                     self.diff = None;
-                    self.hunk_view_rows.clear();
+                    self.viewer.hunk_view_rows.clear();
                     self.old_buffer = None;
                     self.new_buffer = None;
                     self.old_highlights.clear();
                     self.new_highlights.clear();
                     self.commented_hunks.clear();
-                    self.error_msg = Some(format!("Failed to load diff: {}", message));
-                    self.dirty = true;
+                    self.ui.error = Some(format!("Failed to load diff: {}", message));
+                    self.ui.dirty = true;
                 }
             }
         }
@@ -728,15 +747,15 @@ impl App {
                     }
 
                     self.pending_pr_list_id = None;
-                    self.pr_list = prs;
-                    self.pr_loading = false;
-                    self.error_msg = None;
+                    self.pr.list = prs;
+                    self.pr.loading = false;
+                    self.ui.error = None;
 
-                    if self.pr_list.is_empty() {
-                        self.status_msg = Some("No PRs found".to_string());
+                    if self.pr.list.is_empty() {
+                        self.ui.status = Some("No PRs found".to_string());
                     }
 
-                    self.dirty = true;
+                    self.ui.dirty = true;
                 }
                 PrResponse::ListError { id, message } => {
                     if self.pending_pr_list_id != Some(id) {
@@ -744,10 +763,10 @@ impl App {
                     }
 
                     self.pending_pr_list_id = None;
-                    self.pr_list.clear();
-                    self.pr_loading = false;
-                    self.error_msg = Some(format!("Failed to fetch PRs: {}", message));
-                    self.dirty = true;
+                    self.pr.list.clear();
+                    self.pr.loading = false;
+                    self.ui.error = Some(format!("Failed to fetch PRs: {}", message));
+                    self.ui.dirty = true;
                 }
                 PrResponse::Diff { id, diff } => {
                     if self.pending_pr_load_id != Some(id) {
@@ -755,15 +774,15 @@ impl App {
                     }
 
                     self.pending_pr_load_id = None;
-                    self.pr_loading = false;
+                    self.pr.loading = false;
                     self.loading = false;
-                    self.error_msg = None;
+                    self.ui.error = None;
 
-                    let pr = match self.pending_pr.take().or_else(|| self.current_pr.clone()) {
+                    let pr = match self.pending_pr.take().or_else(|| self.pr.current.clone()) {
                         Some(pr) => pr,
                         None => {
-                            self.error_msg = Some("No PR selected".to_string());
-                            self.dirty = true;
+                            self.ui.error = Some("No PR selected".to_string());
+                            self.ui.dirty = true;
                             continue;
                         }
                     };
@@ -779,9 +798,9 @@ impl App {
                         })
                         .collect();
 
-                    self.pr_files = pr_files;
-                    self.pr_mode = true;
-                    self.current_pr = Some(pr.clone());
+                    self.pr.files = pr_files;
+                    self.pr.active = true;
+                    self.pr.current = Some(pr.clone());
 
                     self.source = DiffSource::PullRequest {
                         number: pr.number,
@@ -789,20 +808,20 @@ impl App {
                         base: pr.base_ref_name.clone(),
                     };
 
-                    self.selected_idx = 0;
-                    self.sidebar_scroll = 0;
+                    self.sidebar.selected_idx = 0;
+                    self.sidebar.scroll = 0;
 
                     if !self.files.is_empty() {
                         self.request_current_pr_diff();
                     } else {
                         self.diff = None;
-                        self.hunk_view_rows.clear();
+                        self.viewer.hunk_view_rows.clear();
                         self.old_buffer = None;
                         self.new_buffer = None;
-                        self.status_msg = Some("PR has no changed files".to_string());
+                        self.ui.status = Some("PR has no changed files".to_string());
                     }
 
-                    self.dirty = true;
+                    self.ui.dirty = true;
                 }
                 PrResponse::DiffError { id, message } => {
                     if self.pending_pr_load_id != Some(id) {
@@ -811,10 +830,10 @@ impl App {
 
                     self.pending_pr_load_id = None;
                     self.pending_pr = None;
-                    self.pr_loading = false;
+                    self.pr.loading = false;
                     self.loading = false;
-                    self.error_msg = Some(format!("Failed to load PR diff: {}", message));
-                    self.dirty = true;
+                    self.ui.error = Some(format!("Failed to load PR diff: {}", message));
+                    self.ui.dirty = true;
                 }
             }
         }
@@ -822,24 +841,25 @@ impl App {
 
     /// Move selection up in sidebar.
     pub fn select_prev(&mut self) {
-        if self.filtered_indices.is_empty() {
+        if self.sidebar.filtered_indices.is_empty() {
             // No filter - simple prev
-            if self.selected_idx > 0 {
-                self.selected_idx -= 1;
+            if self.sidebar.selected_idx > 0 {
+                self.sidebar.selected_idx -= 1;
                 self.request_current_diff();
-                self.dirty = true;
+                self.ui.dirty = true;
             }
         } else {
             // Find current position in filtered list and move to prev
             if let Some(pos) = self
+                .sidebar
                 .filtered_indices
                 .iter()
-                .position(|&i| i == self.selected_idx)
+                .position(|&i| i == self.sidebar.selected_idx)
             {
                 if pos > 0 {
-                    self.selected_idx = self.filtered_indices[pos - 1];
+                    self.sidebar.selected_idx = self.sidebar.filtered_indices[pos - 1];
                     self.request_current_diff();
-                    self.dirty = true;
+                    self.ui.dirty = true;
                 }
             }
         }
@@ -847,24 +867,25 @@ impl App {
 
     /// Move selection down in sidebar.
     pub fn select_next(&mut self) {
-        if self.filtered_indices.is_empty() {
+        if self.sidebar.filtered_indices.is_empty() {
             // No filter - simple next
-            if self.selected_idx + 1 < self.files.len() {
-                self.selected_idx += 1;
+            if self.sidebar.selected_idx + 1 < self.files.len() {
+                self.sidebar.selected_idx += 1;
                 self.request_current_diff();
-                self.dirty = true;
+                self.ui.dirty = true;
             }
         } else {
             // Find current position in filtered list and move to next
             if let Some(pos) = self
+                .sidebar
                 .filtered_indices
                 .iter()
-                .position(|&i| i == self.selected_idx)
+                .position(|&i| i == self.sidebar.selected_idx)
             {
-                if pos + 1 < self.filtered_indices.len() {
-                    self.selected_idx = self.filtered_indices[pos + 1];
+                if pos + 1 < self.sidebar.filtered_indices.len() {
+                    self.sidebar.selected_idx = self.sidebar.filtered_indices[pos + 1];
                     self.request_current_diff();
-                    self.dirty = true;
+                    self.ui.dirty = true;
                 }
             }
         }
@@ -882,22 +903,22 @@ impl App {
             } else {
                 self.viewed_in_changeset = self.viewed_in_changeset.saturating_sub(1);
             }
-            self.dirty = true;
+            self.ui.dirty = true;
         }
     }
 
     /// Advance to next unviewed file, respecting filter.
     fn advance_to_next_unviewed(&mut self) {
-        let visible = if self.filtered_indices.is_empty() {
+        let visible = if self.sidebar.filtered_indices.is_empty() {
             (0..self.files.len()).collect::<Vec<_>>()
         } else {
-            self.filtered_indices.clone()
+            self.sidebar.filtered_indices.clone()
         };
 
         // Find current position in visible list
         let cur_pos = visible
             .iter()
-            .position(|&i| i == self.selected_idx)
+            .position(|&i| i == self.sidebar.selected_idx)
             .unwrap_or(0);
 
         // Search forward from current position, wrapping around
@@ -905,7 +926,7 @@ impl App {
             let pos = (cur_pos + offset) % visible.len();
             let idx = visible[pos];
             if !self.viewed.is_viewed(&self.files[idx].path) {
-                self.selected_idx = idx;
+                self.sidebar.selected_idx = idx;
                 self.request_current_diff();
                 return;
             }
@@ -914,8 +935,8 @@ impl App {
     }
 
     fn rebuild_view_rows(&mut self) {
-        self.hunk_view_rows = match self.diff.as_ref() {
-            Some(diff) => build_view_rows(diff, self.diff_view_mode),
+        self.viewer.hunk_view_rows = match self.diff.as_ref() {
+            Some(diff) => build_view_rows(diff, self.viewer.view_mode),
             None => Vec::new(),
         };
     }
@@ -925,15 +946,15 @@ impl App {
             return 0;
         };
 
-        match self.diff_view_mode {
+        match self.viewer.view_mode {
             DiffViewMode::FullFile => diff.row_count(),
-            DiffViewMode::HunksOnly => self.hunk_view_rows.len(),
+            DiffViewMode::HunksOnly => self.viewer.hunk_view_rows.len(),
         }
     }
 
     pub(crate) fn view_row_to_diff_row(&self, view_row: usize) -> Option<usize> {
         let diff = self.diff.as_ref()?;
-        match self.diff_view_mode {
+        match self.viewer.view_mode {
             DiffViewMode::FullFile => {
                 if view_row < diff.row_count() {
                     Some(view_row)
@@ -941,12 +962,12 @@ impl App {
                     None
                 }
             }
-            DiffViewMode::HunksOnly => self.hunk_view_rows.get(view_row).copied(),
+            DiffViewMode::HunksOnly => self.viewer.hunk_view_rows.get(view_row).copied(),
         }
     }
 
     fn diff_row_to_view_row(&self, diff_row: usize) -> Option<usize> {
-        match self.diff_view_mode {
+        match self.viewer.view_mode {
             DiffViewMode::FullFile => {
                 let diff = self.diff.as_ref()?;
                 if diff_row < diff.row_count() {
@@ -955,7 +976,9 @@ impl App {
                     None
                 }
             }
-            DiffViewMode::HunksOnly => map_diff_row_to_view_row(&self.hunk_view_rows, diff_row),
+            DiffViewMode::HunksOnly => {
+                map_diff_row_to_view_row(&self.viewer.hunk_view_rows, diff_row)
+            }
         }
     }
 
@@ -965,18 +988,18 @@ impl App {
         };
 
         let mut rows = Vec::new();
-        match self.diff_view_mode {
+        match self.viewer.view_mode {
             DiffViewMode::FullFile => {
-                for (offset, row) in diff.render_rows(self.scroll_y, height).enumerate() {
-                    let row_idx = self.scroll_y + offset;
+                for (offset, row) in diff.render_rows(self.viewer.scroll_y, height).enumerate() {
+                    let row_idx = self.viewer.scroll_y + offset;
                     rows.push((row_idx, row));
                 }
             }
             DiffViewMode::HunksOnly => {
-                let start = self.scroll_y;
+                let start = self.viewer.scroll_y;
                 let end = start.saturating_add(height);
                 for view_idx in start..end {
-                    let Some(&row_idx) = self.hunk_view_rows.get(view_idx) else {
+                    let Some(&row_idx) = self.viewer.hunk_view_rows.get(view_idx) else {
                         break;
                     };
                     if let Some(row) = diff.rows().get(row_idx) {
@@ -991,45 +1014,46 @@ impl App {
 
     /// Toggle between hunks-only and full-file diff views.
     pub fn toggle_diff_view_mode(&mut self) {
-        let current_row = self.view_row_to_diff_row(self.scroll_y);
+        let current_row = self.view_row_to_diff_row(self.viewer.scroll_y);
 
-        self.diff_view_mode = match self.diff_view_mode {
+        self.viewer.view_mode = match self.viewer.view_mode {
             DiffViewMode::HunksOnly => DiffViewMode::FullFile,
             DiffViewMode::FullFile => DiffViewMode::HunksOnly,
         };
 
         self.rebuild_view_rows();
 
-        self.scroll_y = current_row
+        self.viewer.scroll_y = current_row
             .and_then(|row| self.diff_row_to_view_row(row))
             .unwrap_or(0);
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Scroll diff view.
     pub fn scroll_diff(&mut self, delta_y: isize, delta_x: isize) {
-        let old_y = self.scroll_y;
-        let old_x = self.scroll_x;
+        let old_y = self.viewer.scroll_y;
+        let old_x = self.viewer.scroll_x;
 
         if delta_y < 0 {
-            self.scroll_y = self.scroll_y.saturating_sub((-delta_y) as usize);
+            self.viewer.scroll_y = self.viewer.scroll_y.saturating_sub((-delta_y) as usize);
         } else {
             let max_scroll = self.view_row_count();
             if max_scroll == 0 {
-                self.scroll_y = 0;
+                self.viewer.scroll_y = 0;
             } else {
-                self.scroll_y = (self.scroll_y + delta_y as usize).min(max_scroll - 1);
+                self.viewer.scroll_y =
+                    (self.viewer.scroll_y + delta_y as usize).min(max_scroll - 1);
             }
         }
 
         if delta_x < 0 {
-            self.scroll_x = self.scroll_x.saturating_sub((-delta_x) as usize);
+            self.viewer.scroll_x = self.viewer.scroll_x.saturating_sub((-delta_x) as usize);
         } else {
-            self.scroll_x += delta_x as usize;
+            self.viewer.scroll_x += delta_x as usize;
         }
 
-        if self.scroll_y != old_y || self.scroll_x != old_x {
-            self.dirty = true;
+        if self.viewer.scroll_y != old_y || self.viewer.scroll_x != old_x {
+            self.ui.dirty = true;
         }
     }
 
@@ -1038,14 +1062,14 @@ impl App {
         let Some(diff) = &self.diff else {
             return;
         };
-        let Some(current_row) = self.view_row_to_diff_row(self.scroll_y) else {
+        let Some(current_row) = self.view_row_to_diff_row(self.viewer.scroll_y) else {
             return;
         };
 
         if let Some(row) = diff.next_hunk_row(current_row) {
             if let Some(view_row) = self.diff_row_to_view_row(row) {
-                self.scroll_y = view_row;
-                self.dirty = true;
+                self.viewer.scroll_y = view_row;
+                self.ui.dirty = true;
             }
         }
     }
@@ -1055,14 +1079,14 @@ impl App {
         let Some(diff) = &self.diff else {
             return;
         };
-        let Some(current_row) = self.view_row_to_diff_row(self.scroll_y) else {
+        let Some(current_row) = self.view_row_to_diff_row(self.viewer.scroll_y) else {
             return;
         };
 
         if let Some(row) = diff.prev_hunk_row(current_row) {
             if let Some(view_row) = self.diff_row_to_view_row(row) {
-                self.scroll_y = view_row;
-                self.dirty = true;
+                self.viewer.scroll_y = view_row;
+                self.ui.dirty = true;
             }
         }
     }
@@ -1075,7 +1099,7 @@ impl App {
         if hunks.is_empty() {
             return None;
         }
-        let row = self.view_row_to_diff_row(self.scroll_y)?;
+        let row = self.view_row_to_diff_row(self.viewer.scroll_y)?;
         let hunk_idx = diff.hunk_at_row(row)?;
         Some((hunk_idx + 1, hunks.len()))
     }
@@ -1086,20 +1110,20 @@ impl App {
             Focus::Sidebar => Focus::Diff,
             Focus::Diff => Focus::Sidebar,
         };
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Set focus directly.
     pub fn set_focus(&mut self, focus: Focus) {
         if self.focus != focus {
             self.focus = focus;
-            self.dirty = true;
+            self.ui.dirty = true;
         }
     }
 
     /// Toggle old pane fullscreen mode (old-only <-> both).
     pub fn toggle_old_fullscreen(&mut self) {
-        let next = match self.diff_pane_mode {
+        let next = match self.viewer.pane_mode {
             DiffPaneMode::OldOnly => DiffPaneMode::Both,
             _ => DiffPaneMode::OldOnly,
         };
@@ -1108,7 +1132,7 @@ impl App {
 
     /// Toggle new pane fullscreen mode (new-only <-> both).
     pub fn toggle_new_fullscreen(&mut self) {
-        let next = match self.diff_pane_mode {
+        let next = match self.viewer.pane_mode {
             DiffPaneMode::NewOnly => DiffPaneMode::Both,
             _ => DiffPaneMode::NewOnly,
         };
@@ -1116,17 +1140,17 @@ impl App {
     }
 
     fn set_diff_pane_mode(&mut self, mode: DiffPaneMode) {
-        if self.diff_pane_mode != mode {
-            self.diff_pane_mode = mode;
-            self.dirty = true;
+        if self.viewer.pane_mode != mode {
+            self.viewer.pane_mode = mode;
+            self.ui.dirty = true;
         }
     }
 
     /// Open the selected file in the user's configured editor.
     pub fn open_selected_in_editor(&mut self) {
         let Some(file) = self.selected_file() else {
-            self.error_msg = Some("No file selected to open".to_string());
-            self.dirty = true;
+            self.ui.error = Some("No file selected to open".to_string());
+            self.ui.dirty = true;
             return;
         };
 
@@ -1134,8 +1158,8 @@ impl App {
         let command_parts = match Self::editor_command() {
             Ok(parts) => parts,
             Err(msg) => {
-                self.error_msg = Some(msg);
-                self.dirty = true;
+                self.ui.error = Some(msg);
+                self.ui.dirty = true;
                 return;
             }
         };
@@ -1148,34 +1172,34 @@ impl App {
         cmd.arg(&path);
 
         if let Err(e) = Self::suspend_terminal_for_external() {
-            self.error_msg = Some(format!("Failed to release terminal: {}", e));
-            self.dirty = true;
+            self.ui.error = Some(format!("Failed to release terminal: {}", e));
+            self.ui.dirty = true;
             return;
         }
 
         let status = cmd.status();
 
         if let Err(e) = Self::resume_terminal_after_external() {
-            self.error_msg = Some(format!("Failed to restore terminal: {}", e));
-            self.dirty = true;
+            self.ui.error = Some(format!("Failed to restore terminal: {}", e));
+            self.ui.dirty = true;
             return;
         }
 
         match status {
             Ok(status) => {
                 if status.success() {
-                    self.status_msg = Some(format!("Editor closed for {}", file.path.as_str()));
-                    self.error_msg = None;
+                    self.ui.status = Some(format!("Editor closed for {}", file.path.as_str()));
+                    self.ui.error = None;
                 } else {
-                    self.error_msg = Some(format!("Editor exited with code {:?}", status.code()));
+                    self.ui.error = Some(format!("Editor exited with code {:?}", status.code()));
                 }
             }
             Err(e) => {
-                self.error_msg = Some(format!("Failed to launch editor: {}", e));
+                self.ui.error = Some(format!("Failed to launch editor: {}", e));
             }
         }
 
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Determine the command used to launch the external editor.
@@ -1217,25 +1241,25 @@ impl App {
     /// Copy the currently selected file path to the clipboard.
     pub fn copy_selected_path(&mut self) {
         let Some(file) = self.selected_file() else {
-            self.error_msg = Some("No file selected to copy".to_string());
-            self.dirty = true;
+            self.ui.error = Some("No file selected to copy".to_string());
+            self.ui.dirty = true;
             return;
         };
 
         match Clipboard::new() {
             Ok(mut clipboard) => {
                 if let Err(e) = clipboard.set_text(file.path.as_str().to_string()) {
-                    self.error_msg = Some(format!("Clipboard error: {}", e));
+                    self.ui.error = Some(format!("Clipboard error: {}", e));
                 } else {
-                    self.status_msg = Some(format!("Copied {} to clipboard", file.path));
+                    self.ui.status = Some(format!("Copied {} to clipboard", file.path));
                 }
             }
             Err(e) => {
-                self.error_msg = Some(format!("Clipboard unavailable: {}", e));
+                self.ui.error = Some(format!("Clipboard unavailable: {}", e));
             }
         }
 
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Reload the current diff or refresh file list manually.
@@ -1246,33 +1270,33 @@ impl App {
             }
             DiffSource::Commit(_) | DiffSource::Range { .. } => {
                 if self.files.is_empty() {
-                    self.status_msg = Some("No files to reload".to_string());
+                    self.ui.status = Some("No files to reload".to_string());
                 } else {
                     self.request_current_diff();
-                    self.status_msg = Some("Reloaded current diff".to_string());
+                    self.ui.status = Some("Reloaded current diff".to_string());
                 }
-                self.dirty = true;
+                self.ui.dirty = true;
             }
             DiffSource::PullRequest { .. } => {
                 // PR reload handled by refresh_pr() in PR mode
                 self.request_current_diff();
-                self.status_msg = Some("Reloaded PR diff".to_string());
-                self.dirty = true;
+                self.ui.status = Some("Reloaded PR diff".to_string());
+                self.ui.dirty = true;
             }
         }
     }
 
     /// Open the in-app help overlay.
     pub fn open_help(&mut self) {
-        self.mode = Mode::Help;
-        self.dirty = true;
+        self.ui.mode = Mode::Help;
+        self.ui.dirty = true;
     }
 
     /// Close the help overlay.
     pub fn close_help(&mut self) {
-        if self.mode == Mode::Help {
-            self.mode = Mode::Normal;
-            self.dirty = true;
+        if self.ui.mode == Mode::Help {
+            self.ui.mode = Mode::Normal;
+            self.ui.dirty = true;
         }
     }
 
@@ -1303,96 +1327,96 @@ impl App {
 
     /// Mark dirty for redraw.
     pub fn mark_dirty(&mut self) {
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Clear dirty flag after drawing.
     pub fn clear_dirty(&mut self) {
-        self.dirty = false;
+        self.ui.dirty = false;
     }
 
     /// Start adding a comment on the current hunk.
     pub fn start_add_comment(&mut self) {
         let Some(diff) = &self.diff else {
-            self.error_msg = Some("No diff available".to_string());
-            self.dirty = true;
+            self.ui.error = Some("No diff available".to_string());
+            self.ui.dirty = true;
             return;
         };
 
         if diff.hunks().is_empty() {
-            self.error_msg = Some("No hunks to comment on".to_string());
-            self.dirty = true;
+            self.ui.error = Some("No hunks to comment on".to_string());
+            self.ui.dirty = true;
             return;
         }
 
-        let Some(row) = self.view_row_to_diff_row(self.scroll_y) else {
-            self.error_msg = Some("Not on a hunk - navigate to a hunk first".to_string());
-            self.dirty = true;
+        let Some(row) = self.view_row_to_diff_row(self.viewer.scroll_y) else {
+            self.ui.error = Some("Not on a hunk - navigate to a hunk first".to_string());
+            self.ui.dirty = true;
             return;
         };
 
         if diff.hunk_at_row(row).is_none() {
-            self.error_msg = Some("Not on a hunk - navigate to a hunk first".to_string());
-            self.dirty = true;
+            self.ui.error = Some("Not on a hunk - navigate to a hunk first".to_string());
+            self.ui.dirty = true;
             return;
         }
 
-        self.mode = Mode::AddComment;
-        self.draft_comment.clear();
-        self.error_msg = None;
-        self.status_msg = None;
-        self.dirty = true;
+        self.ui.mode = Mode::AddComment;
+        self.comments.draft.clear();
+        self.ui.error = None;
+        self.ui.status = None;
+        self.ui.dirty = true;
     }
 
     /// Cancel adding a comment.
     pub fn cancel_add_comment(&mut self) {
-        self.mode = Mode::Normal;
-        self.draft_comment.clear();
-        self.dirty = true;
+        self.ui.mode = Mode::Normal;
+        self.comments.draft.clear();
+        self.ui.dirty = true;
     }
 
     /// Save the current draft comment.
     pub fn save_comment(&mut self) {
-        if self.draft_comment.trim().is_empty() {
-            self.error_msg = Some("Comment cannot be empty".to_string());
-            self.dirty = true;
+        if self.comments.draft.trim().is_empty() {
+            self.ui.error = Some("Comment cannot be empty".to_string());
+            self.ui.dirty = true;
             return;
         }
 
         let Some(diff) = &self.diff else {
-            self.error_msg = Some("No diff available".to_string());
-            self.mode = Mode::Normal;
-            self.dirty = true;
+            self.ui.error = Some("No diff available".to_string());
+            self.ui.mode = Mode::Normal;
+            self.ui.dirty = true;
             return;
         };
 
-        let Some(row) = self.view_row_to_diff_row(self.scroll_y) else {
-            self.error_msg = Some("No hunk at current position".to_string());
-            self.mode = Mode::Normal;
-            self.dirty = true;
+        let Some(row) = self.view_row_to_diff_row(self.viewer.scroll_y) else {
+            self.ui.error = Some("No hunk at current position".to_string());
+            self.ui.mode = Mode::Normal;
+            self.ui.dirty = true;
             return;
         };
 
         let Some(hunk_idx) = diff.hunk_at_row(row) else {
-            self.error_msg = Some("No hunk at current position".to_string());
-            self.mode = Mode::Normal;
-            self.dirty = true;
+            self.ui.error = Some("No hunk at current position".to_string());
+            self.ui.mode = Mode::Normal;
+            self.ui.dirty = true;
             return;
         };
 
         let Some(file) = self.selected_file() else {
-            self.error_msg = Some("No file selected".to_string());
-            self.mode = Mode::Normal;
-            self.dirty = true;
+            self.ui.error = Some("No file selected".to_string());
+            self.ui.mode = Mode::Normal;
+            self.ui.dirty = true;
             return;
         };
 
         let path = file.path.clone();
 
         let Some(selector) = selector_from_hunk(diff, hunk_idx) else {
-            self.error_msg = Some("Failed to create comment anchor".to_string());
-            self.mode = Mode::Normal;
-            self.dirty = true;
+            self.ui.error = Some("Failed to create comment anchor".to_string());
+            self.ui.mode = Mode::Normal;
+            self.ui.dirty = true;
             return;
         };
 
@@ -1403,9 +1427,9 @@ impl App {
         let mut store = match FileCommentStore::open(&self.repo) {
             Ok(s) => s,
             Err(e) => {
-                self.error_msg = Some(format!("Failed to open comment store: {}", e));
-                self.mode = Mode::Normal;
-                self.dirty = true;
+                self.ui.error = Some(format!("Failed to open comment store: {}", e));
+                self.ui.mode = Mode::Normal;
+                self.ui.dirty = true;
                 return;
             }
         };
@@ -1413,47 +1437,48 @@ impl App {
         match store.add(
             path.clone(),
             self.comment_context.clone(),
-            self.draft_comment.clone(),
+            self.comments.draft.clone(),
             anchor,
         ) {
             Ok(id) => {
-                self.status_msg = Some(format!("Comment {} saved", id));
-                self.error_msg = None;
+                self.ui.status = Some(format!("Comment {} saved", id));
+                self.ui.error = None;
                 *self.open_comment_counts.entry(path).or_insert(0) += 1;
                 self.commented_hunks.insert(hunk_idx);
             }
             Err(e) => {
-                self.error_msg = Some(format!("Failed to save comment: {}", e));
+                self.ui.error = Some(format!("Failed to save comment: {}", e));
             }
         }
 
-        self.mode = Mode::Normal;
-        self.draft_comment.clear();
-        self.dirty = true;
+        self.ui.mode = Mode::Normal;
+        self.comments.draft.clear();
+        self.ui.dirty = true;
     }
 
     fn refresh_viewing_comments(&mut self) {
         let Some(file) = self.selected_file() else {
-            self.viewing_comments.clear();
-            self.viewing_comments_selected = 0;
-            self.viewing_comments_scroll = 0;
+            self.comments.viewing.clear();
+            self.comments.selected = 0;
+            self.comments.scroll = 0;
             return;
         };
 
-        let include_resolved = self.viewing_include_resolved;
+        let include_resolved = self.comments.include_resolved;
 
         let Ok(store) = FileCommentStore::open(&self.repo) else {
-            self.viewing_comments.clear();
-            self.viewing_comments_selected = 0;
-            self.viewing_comments_scroll = 0;
+            self.comments.viewing.clear();
+            self.comments.selected = 0;
+            self.comments.scroll = 0;
             return;
         };
 
         let comments = store.list_for_path(&file.path, include_resolved);
 
         let selected_id = self
-            .viewing_comments
-            .get(self.viewing_comments_selected)
+            .comments
+            .viewing
+            .get(self.comments.selected)
             .map(|c| c.id);
 
         let mut digest_to_start_row: HashMap<String, usize> = HashMap::new();
@@ -1492,130 +1517,118 @@ impl App {
 
         items.sort_by_key(|c| (c.status != CommentStatus::Open, c.id));
 
-        self.viewing_comments = items;
+        self.comments.viewing = items;
 
-        self.viewing_comments_selected = match selected_id {
+        self.comments.selected = match selected_id {
             Some(id) => self
-                .viewing_comments
+                .comments
+                .viewing
                 .iter()
                 .position(|c| c.id == id)
                 .unwrap_or(0),
             None => 0,
         };
 
-        if self.viewing_comments.is_empty() {
-            self.viewing_comments_selected = 0;
-            self.viewing_comments_scroll = 0;
+        if self.comments.viewing.is_empty() {
+            self.comments.selected = 0;
+            self.comments.scroll = 0;
         } else {
-            self.viewing_comments_selected = self
-                .viewing_comments_selected
-                .min(self.viewing_comments.len() - 1);
-            self.viewing_comments_scroll = self
-                .viewing_comments_scroll
-                .min(self.viewing_comments.len() - 1);
+            self.comments.selected = self.comments.selected.min(self.comments.viewing.len() - 1);
+            self.comments.scroll = self.comments.scroll.min(self.comments.viewing.len() - 1);
         }
     }
 
     /// Show comments overlay for current file.
     pub fn show_comments(&mut self) {
-        self.viewing_include_resolved = false;
-        self.viewing_comments_selected = 0;
-        self.viewing_comments_scroll = 0;
+        self.comments.include_resolved = false;
+        self.comments.selected = 0;
+        self.comments.scroll = 0;
         self.refresh_viewing_comments();
 
-        if self.viewing_comments.is_empty() {
-            self.status_msg = Some("No comments on this file".to_string());
-            self.dirty = true;
+        if self.comments.viewing.is_empty() {
+            self.ui.status = Some("No comments on this file".to_string());
+            self.ui.dirty = true;
             return;
         }
 
-        self.mode = Mode::ViewComments;
-        self.dirty = true;
+        self.ui.mode = Mode::ViewComments;
+        self.ui.dirty = true;
     }
 
     /// Close the comments view and return to normal mode.
     pub fn close_comments(&mut self) {
-        self.mode = Mode::Normal;
-        self.viewing_comments.clear();
-        self.viewing_comments_selected = 0;
-        self.viewing_comments_scroll = 0;
-        self.dirty = true;
+        self.ui.mode = Mode::Normal;
+        self.comments.viewing.clear();
+        self.comments.selected = 0;
+        self.comments.scroll = 0;
+        self.ui.dirty = true;
     }
 
     /// Select the next comment in the list.
     pub fn comments_select_next(&mut self) {
-        if self.viewing_comments.is_empty() {
+        if self.comments.viewing.is_empty() {
             return;
         }
-        self.viewing_comments_selected =
-            (self.viewing_comments_selected + 1).min(self.viewing_comments.len() - 1);
-        self.dirty = true;
+        self.comments.selected = (self.comments.selected + 1).min(self.comments.viewing.len() - 1);
+        self.ui.dirty = true;
     }
 
     /// Select the previous comment in the list.
     pub fn comments_select_prev(&mut self) {
-        self.viewing_comments_selected = self.viewing_comments_selected.saturating_sub(1);
-        self.dirty = true;
+        self.comments.selected = self.comments.selected.saturating_sub(1);
+        self.ui.dirty = true;
     }
 
     /// Toggle whether resolved comments are shown.
     pub fn comments_toggle_include_resolved(&mut self) {
-        self.viewing_include_resolved = !self.viewing_include_resolved;
+        self.comments.include_resolved = !self.comments.include_resolved;
         self.refresh_viewing_comments();
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Jump to the selected comment's location in the diff.
     pub fn comments_jump_to_selected(&mut self) {
-        if self.viewing_comments.is_empty() {
+        if self.comments.viewing.is_empty() {
             return;
         }
 
-        let Some(item) = self
-            .viewing_comments
-            .get(self.viewing_comments_selected)
-            .cloned()
-        else {
+        let Some(item) = self.comments.viewing.get(self.comments.selected).cloned() else {
             return;
         };
 
         let Some(row) = item.hunk_start_row else {
-            self.status_msg = Some("Comment anchor is stale (hunk not found)".to_string());
-            self.dirty = true;
+            self.ui.status = Some("Comment anchor is stale (hunk not found)".to_string());
+            self.ui.dirty = true;
             return;
         };
 
-        self.scroll_y = self.diff_row_to_view_row(row).unwrap_or(0);
+        self.viewer.scroll_y = self.diff_row_to_view_row(row).unwrap_or(0);
         self.focus = Focus::Diff;
         self.close_comments();
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Resolve the currently selected comment.
     pub fn comments_resolve_selected(&mut self) {
-        if self.viewing_comments.is_empty() {
+        if self.comments.viewing.is_empty() {
             return;
         }
 
-        let Some(item) = self
-            .viewing_comments
-            .get(self.viewing_comments_selected)
-            .cloned()
-        else {
+        let Some(item) = self.comments.viewing.get(self.comments.selected).cloned() else {
             return;
         };
 
         if item.status != CommentStatus::Open {
-            self.status_msg = Some("Comment already resolved".to_string());
-            self.dirty = true;
+            self.ui.status = Some("Comment already resolved".to_string());
+            self.ui.dirty = true;
             return;
         }
 
         let mut store = match FileCommentStore::open(&self.repo) {
             Ok(s) => s,
             Err(e) => {
-                self.error_msg = Some(format!("Failed to open comment store: {}", e));
-                self.dirty = true;
+                self.ui.error = Some(format!("Failed to open comment store: {}", e));
+                self.ui.dirty = true;
                 return;
             }
         };
@@ -1636,17 +1649,17 @@ impl App {
                 }
                 self.refresh_current_file_comment_markers();
                 self.refresh_viewing_comments();
-                self.status_msg = Some(format!("Resolved comment {}", item.id));
+                self.ui.status = Some(format!("Resolved comment {}", item.id));
             }
             Ok(false) => {
-                self.error_msg = Some(format!("Comment {} not found", item.id));
+                self.ui.error = Some(format!("Comment {} not found", item.id));
             }
             Err(e) => {
-                self.error_msg = Some(format!("Failed to resolve comment: {}", e));
+                self.ui.error = Some(format!("Failed to resolve comment: {}", e));
             }
         }
 
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     // ========================================================================
@@ -1655,25 +1668,25 @@ impl App {
 
     /// Start filtering files in sidebar.
     pub fn start_filter(&mut self) {
-        self.mode = Mode::FilterFiles;
-        self.sidebar_filter.clear();
-        self.dirty = true;
+        self.ui.mode = Mode::FilterFiles;
+        self.sidebar.filter.clear();
+        self.ui.dirty = true;
     }
 
     /// Apply the current filter query using fuzzy matching.
     pub fn apply_filter(&mut self) {
         self.recompute_filter();
-        self.mode = Mode::Normal;
-        self.dirty = true;
+        self.ui.mode = Mode::Normal;
+        self.ui.dirty = true;
     }
 
     /// Recompute filtered indices from current query (for live filtering).
     fn recompute_filter(&mut self) {
-        let query = self.sidebar_filter.trim();
+        let query = self.sidebar.filter.trim();
         if query.is_empty() {
-            self.filtered_indices.clear();
+            self.sidebar.filtered_indices.clear();
         } else {
-            self.filtered_indices = self.fuzzy_matcher.filter_sorted(
+            self.sidebar.filtered_indices = self.fuzzy_matcher.filter_sorted(
                 query,
                 self.files
                     .iter()
@@ -1682,9 +1695,13 @@ impl App {
             );
         }
         // Reset selection to first match if current selection is filtered out
-        if !self.filtered_indices.is_empty() && !self.filtered_indices.contains(&self.selected_idx)
+        if !self.sidebar.filtered_indices.is_empty()
+            && !self
+                .sidebar
+                .filtered_indices
+                .contains(&self.sidebar.selected_idx)
         {
-            self.selected_idx = self.filtered_indices[0];
+            self.sidebar.selected_idx = self.sidebar.filtered_indices[0];
             self.request_current_diff();
         }
     }
@@ -1692,32 +1709,33 @@ impl App {
     /// Update filter live as user types.
     pub fn update_filter_live(&mut self) {
         self.recompute_filter();
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Cancel filter and restore full list.
     pub fn cancel_filter(&mut self) {
-        self.mode = Mode::Normal;
-        self.sidebar_filter.clear();
-        self.filtered_indices.clear();
-        self.dirty = true;
+        self.ui.mode = Mode::Normal;
+        self.sidebar.filter.clear();
+        self.sidebar.filtered_indices.clear();
+        self.ui.dirty = true;
     }
 
     /// Clear filter while in Normal mode.
     pub fn clear_filter(&mut self) {
-        if !self.filtered_indices.is_empty() {
-            self.filtered_indices.clear();
-            self.sidebar_filter.clear();
-            self.dirty = true;
+        if !self.sidebar.filtered_indices.is_empty() {
+            self.sidebar.filtered_indices.clear();
+            self.sidebar.filter.clear();
+            self.ui.dirty = true;
         }
     }
 
     /// Get visible files (filtered or all).
     pub fn visible_files(&self) -> Vec<(usize, &ChangedFile)> {
-        if self.filtered_indices.is_empty() {
+        if self.sidebar.filtered_indices.is_empty() {
             self.files.iter().enumerate().collect()
         } else {
-            self.filtered_indices
+            self.sidebar
+                .filtered_indices
                 .iter()
                 .filter_map(|&i| self.files.get(i).map(|f| (i, f)))
                 .collect()
@@ -1726,7 +1744,7 @@ impl App {
 
     /// Check if a file index is visible (passes filter).
     pub fn is_file_visible(&self, idx: usize) -> bool {
-        self.filtered_indices.is_empty() || self.filtered_indices.contains(&idx)
+        self.sidebar.filtered_indices.is_empty() || self.sidebar.filtered_indices.contains(&idx)
     }
 
     // ========================================================================
@@ -1743,16 +1761,16 @@ impl App {
             .position(|t| t == &self.theme_original)
             .unwrap_or(0);
         self.theme_selector_idx = current;
-        self.mode = Mode::SelectTheme;
-        self.dirty = true;
+        self.ui.mode = Mode::SelectTheme;
+        self.ui.dirty = true;
     }
 
     /// Close theme selector without applying.
     pub fn close_theme_selector(&mut self) {
         // Restore original theme
         self.theme = Theme::load(&self.theme_original);
-        self.mode = Mode::Normal;
-        self.dirty = true;
+        self.ui.mode = Mode::Normal;
+        self.ui.dirty = true;
     }
 
     /// Move selection up in theme list.
@@ -1761,7 +1779,7 @@ impl App {
             self.theme_selector_idx -= 1;
             // Live preview
             self.theme = Theme::load(&self.theme_list[self.theme_selector_idx]);
-            self.dirty = true;
+            self.ui.dirty = true;
         }
     }
 
@@ -1771,15 +1789,15 @@ impl App {
             self.theme_selector_idx += 1;
             // Live preview
             self.theme = Theme::load(&self.theme_list[self.theme_selector_idx]);
-            self.dirty = true;
+            self.ui.dirty = true;
         }
     }
 
     /// Apply selected theme and close selector.
     pub fn theme_apply(&mut self) {
         self.theme_original = self.theme_list[self.theme_selector_idx].clone();
-        self.mode = Mode::Normal;
-        self.dirty = true;
+        self.ui.mode = Mode::Normal;
+        self.ui.dirty = true;
     }
 
     // ========================================================================
@@ -1843,23 +1861,26 @@ impl App {
         // Restore selection if file still exists
         if let Some(ref path) = current_path {
             if let Some(idx) = self.files.iter().position(|f| &f.path == path) {
-                self.selected_idx = idx;
+                self.sidebar.selected_idx = idx;
                 // Re-request diff (file content may have changed)
                 self.request_current_diff();
             } else {
                 // File removed - select next valid or first
-                self.selected_idx = self.selected_idx.min(self.files.len().saturating_sub(1));
+                self.sidebar.selected_idx = self
+                    .sidebar
+                    .selected_idx
+                    .min(self.files.len().saturating_sub(1));
                 if !self.files.is_empty() {
                     self.request_current_diff();
                 } else {
                     self.diff = None;
-                    self.hunk_view_rows.clear();
+                    self.viewer.hunk_view_rows.clear();
                     self.old_buffer = None;
                     self.new_buffer = None;
                 }
             }
         } else if !self.files.is_empty() {
-            self.selected_idx = 0;
+            self.sidebar.selected_idx = 0;
             self.request_current_diff();
         }
 
@@ -1874,13 +1895,13 @@ impl App {
         self.open_comment_counts = load_open_comment_counts(&self.repo, &self.comment_context);
 
         // Clear filter (file indices may have shifted)
-        if !self.filtered_indices.is_empty() {
-            self.filtered_indices.clear();
-            self.sidebar_filter.clear();
+        if !self.sidebar.filtered_indices.is_empty() {
+            self.sidebar.filtered_indices.clear();
+            self.sidebar.filter.clear();
         }
 
-        self.status_msg = Some("Refreshed".to_string());
-        self.dirty = true;
+        self.ui.status = Some("Refreshed".to_string());
+        self.ui.dirty = true;
     }
 
     // ========================================================================
@@ -1890,16 +1911,16 @@ impl App {
     /// Open PR picker mode.
     pub fn open_pr_picker(&mut self) {
         if !crate::core::is_gh_available() {
-            self.error_msg = Some("GitHub CLI not available. Run 'gh auth login'".to_string());
-            self.dirty = true;
+            self.ui.error = Some("GitHub CLI not available. Run 'gh auth login'".to_string());
+            self.ui.dirty = true;
             return;
         }
 
-        self.mode = Mode::PRPicker;
-        self.pr_picker_selected = 0;
-        self.pr_picker_scroll = 0;
-        self.pr_loading = true;
-        self.dirty = true;
+        self.ui.mode = Mode::PRPicker;
+        self.pr.picker_selected = 0;
+        self.pr.picker_scroll = 0;
+        self.pr.loading = true;
+        self.ui.dirty = true;
 
         // Fetch PRs synchronously for now (could be backgrounded later)
         self.fetch_pr_list();
@@ -1907,8 +1928,8 @@ impl App {
 
     /// Fetch PR list from GitHub.
     pub fn fetch_pr_list(&mut self) {
-        self.pr_loading = true;
-        self.error_msg = None;
+        self.pr.loading = true;
+        self.ui.error = None;
 
         let id = self.next_pr_request_id;
         self.next_pr_request_id = self.next_pr_request_id.wrapping_add(1);
@@ -1916,91 +1937,91 @@ impl App {
 
         if !self.send_pr_request(PrRequest::List {
             id,
-            filter: self.pr_filter,
+            filter: self.pr.filter,
         }) {
             self.pending_pr_list_id = None;
-            self.pr_loading = false;
+            self.pr.loading = false;
         }
 
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Close PR picker and return to normal mode.
     pub fn close_pr_picker(&mut self) {
-        self.mode = Mode::Normal;
-        self.pr_list.clear();
-        self.pr_picker_selected = 0;
-        self.pr_picker_scroll = 0;
-        self.pr_loading = false;
+        self.ui.mode = Mode::Normal;
+        self.pr.list.clear();
+        self.pr.picker_selected = 0;
+        self.pr.picker_scroll = 0;
+        self.pr.loading = false;
         self.pending_pr_list_id = None;
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Select next PR in picker.
     pub fn pr_picker_next(&mut self) {
-        if !self.pr_list.is_empty() {
-            self.pr_picker_selected = (self.pr_picker_selected + 1).min(self.pr_list.len() - 1);
-            self.dirty = true;
+        if !self.pr.list.is_empty() {
+            self.pr.picker_selected = (self.pr.picker_selected + 1).min(self.pr.list.len() - 1);
+            self.ui.dirty = true;
         }
     }
 
     /// Select previous PR in picker.
     pub fn pr_picker_prev(&mut self) {
-        self.pr_picker_selected = self.pr_picker_selected.saturating_sub(1);
-        self.dirty = true;
+        self.pr.picker_selected = self.pr.picker_selected.saturating_sub(1);
+        self.ui.dirty = true;
     }
 
     /// Cycle to next PR filter.
     pub fn pr_picker_next_filter(&mut self) {
-        self.pr_filter = match self.pr_filter {
+        self.pr.filter = match self.pr.filter {
             crate::core::PRFilter::All => crate::core::PRFilter::Mine,
             crate::core::PRFilter::Mine => crate::core::PRFilter::ReviewRequested,
             crate::core::PRFilter::ReviewRequested => crate::core::PRFilter::All,
         };
-        self.pr_picker_selected = 0;
+        self.pr.picker_selected = 0;
         self.fetch_pr_list();
     }
 
     /// Cycle to previous PR filter.
     pub fn pr_picker_prev_filter(&mut self) {
-        self.pr_filter = match self.pr_filter {
+        self.pr.filter = match self.pr.filter {
             crate::core::PRFilter::All => crate::core::PRFilter::ReviewRequested,
             crate::core::PRFilter::Mine => crate::core::PRFilter::All,
             crate::core::PRFilter::ReviewRequested => crate::core::PRFilter::Mine,
         };
-        self.pr_picker_selected = 0;
+        self.pr.picker_selected = 0;
         self.fetch_pr_list();
     }
 
     /// Select the highlighted PR and load its diff.
     pub fn pr_picker_select(&mut self) {
-        if self.pr_list.is_empty() {
+        if self.pr.list.is_empty() {
             return;
         }
 
-        let pr = self.pr_list[self.pr_picker_selected].clone();
+        let pr = self.pr.list[self.pr.picker_selected].clone();
         self.load_pr(pr);
     }
 
     /// Load a specific PR's diff.
     pub fn load_pr(&mut self, pr: crate::core::PullRequest) {
-        self.pr_loading = true;
+        self.pr.loading = true;
         self.loading = true;
-        self.error_msg = None;
-        self.mode = Mode::Normal;
-        self.dirty = true;
+        self.ui.error = None;
+        self.ui.mode = Mode::Normal;
+        self.ui.dirty = true;
 
         let id = self.next_pr_request_id;
         self.next_pr_request_id = self.next_pr_request_id.wrapping_add(1);
         self.pending_pr_load_id = Some(id);
         self.pending_pr = Some(pr.clone());
 
-        self.pr_mode = true;
-        self.current_pr = Some(pr.clone());
-        self.pr_files.clear();
+        self.pr.active = true;
+        self.pr.current = Some(pr.clone());
+        self.pr.files.clear();
         self.files.clear();
         self.diff = None;
-        self.hunk_view_rows.clear();
+        self.viewer.hunk_view_rows.clear();
         self.old_buffer = None;
         self.new_buffer = None;
         self.old_scopes.clear();
@@ -2008,8 +2029,8 @@ impl App {
         self.old_highlights.clear();
         self.new_highlights.clear();
         self.is_binary = false;
-        self.scroll_y = 0;
-        self.scroll_x = 0;
+        self.viewer.scroll_y = 0;
+        self.viewer.scroll_x = 0;
 
         self.source = DiffSource::PullRequest {
             number: pr.number,
@@ -2023,18 +2044,18 @@ impl App {
         }) {
             self.pending_pr_load_id = None;
             self.pending_pr = None;
-            self.pr_loading = false;
+            self.pr.loading = false;
             self.loading = false;
         }
     }
 
     /// Request diff for currently selected file in PR mode.
     fn request_current_pr_diff(&mut self) {
-        if !self.pr_mode || self.pr_files.is_empty() {
+        if !self.pr.active || self.pr.files.is_empty() {
             return;
         }
 
-        let Some(pr_file) = self.pr_files.get(self.selected_idx) else {
+        let Some(pr_file) = self.pr.files.get(self.sidebar.selected_idx) else {
             return;
         };
 
@@ -2086,35 +2107,35 @@ impl App {
         self.new_buffer = Some(new_buffer);
         self.diff = diff;
         self.rebuild_view_rows();
-        self.scroll_y = 0;
+        self.viewer.scroll_y = 0;
 
         // Jump to first hunk
         if let Some(diff) = self.diff.as_ref() {
             if let Some(first) = diff.hunks().first() {
                 if let Some(view_row) = self.diff_row_to_view_row(first.start_row) {
-                    self.scroll_y = view_row;
+                    self.viewer.scroll_y = view_row;
                 }
             }
         }
 
-        self.scroll_x = 0;
-        self.error_msg = None;
+        self.viewer.scroll_x = 0;
+        self.ui.error = None;
         self.loading = false;
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Exit PR mode and return to working tree.
     pub fn exit_pr_mode(&mut self) {
-        if !self.pr_mode {
+        if !self.pr.active {
             return;
         }
 
-        self.pr_mode = false;
-        self.current_pr = None;
-        self.pr_files.clear();
+        self.pr.active = false;
+        self.pr.current = None;
+        self.pr.files.clear();
         self.pending_pr_load_id = None;
         self.pending_pr = None;
-        self.pr_loading = false;
+        self.pr.loading = false;
         self.loading = false;
         self.source = DiffSource::WorkingTree;
 
@@ -2122,31 +2143,31 @@ impl App {
         match list_changed_files(&self.repo) {
             Ok(files) => {
                 self.files = files;
-                self.selected_idx = 0;
+                self.sidebar.selected_idx = 0;
                 if !self.files.is_empty() {
                     self.request_current_diff();
                 }
             }
             Err(e) => {
-                self.error_msg = Some(format!("Failed to reload: {}", e));
+                self.ui.error = Some(format!("Failed to reload: {}", e));
             }
         }
 
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     /// Refresh current PR.
     pub fn refresh_pr(&mut self) {
-        if let Some(pr) = self.current_pr.clone() {
+        if let Some(pr) = self.pr.current.clone() {
             self.load_pr(pr);
         }
     }
 
     /// Open the current PR in browser.
     pub fn open_pr_in_browser(&mut self) {
-        let Some(pr) = &self.current_pr else {
-            self.error_msg = Some("No PR selected".to_string());
-            self.dirty = true;
+        let Some(pr) = &self.pr.current else {
+            self.ui.error = Some("No PR selected".to_string());
+            self.ui.dirty = true;
             return;
         };
 
@@ -2155,15 +2176,15 @@ impl App {
 
         match crate::core::open_pr_in_browser(&repo_path, pr_number) {
             Ok(()) => {
-                self.status_msg = Some(format!("Opened PR #{} in browser", pr_number));
-                self.error_msg = None;
+                self.ui.status = Some(format!("Opened PR #{} in browser", pr_number));
+                self.ui.error = None;
             }
             Err(e) => {
-                self.error_msg = Some(format!("Failed to open PR: {}", e));
+                self.ui.error = Some(format!("Failed to open PR: {}", e));
             }
         }
 
-        self.dirty = true;
+        self.ui.dirty = true;
     }
 
     // ========================================================================
@@ -2172,58 +2193,58 @@ impl App {
 
     /// Start approve action.
     pub fn start_pr_approve(&mut self) {
-        if !self.pr_mode || self.current_pr.is_none() {
-            self.error_msg = Some("Not in PR mode".to_string());
-            self.dirty = true;
+        if !self.pr.active || self.pr.current.is_none() {
+            self.ui.error = Some("Not in PR mode".to_string());
+            self.ui.dirty = true;
             return;
         }
 
-        self.pr_action_type = Some(PRActionType::Approve);
-        self.pr_action_text.clear();
-        self.mode = Mode::PRAction;
-        self.dirty = true;
+        self.pr.action_type = Some(PRActionType::Approve);
+        self.pr.action_text.clear();
+        self.ui.mode = Mode::PRAction;
+        self.ui.dirty = true;
     }
 
     /// Start comment action.
     pub fn start_pr_comment(&mut self) {
-        if !self.pr_mode || self.current_pr.is_none() {
-            self.error_msg = Some("Not in PR mode".to_string());
-            self.dirty = true;
+        if !self.pr.active || self.pr.current.is_none() {
+            self.ui.error = Some("Not in PR mode".to_string());
+            self.ui.dirty = true;
             return;
         }
 
-        self.pr_action_type = Some(PRActionType::Comment);
-        self.pr_action_text.clear();
-        self.mode = Mode::PRAction;
-        self.dirty = true;
+        self.pr.action_type = Some(PRActionType::Comment);
+        self.pr.action_text.clear();
+        self.ui.mode = Mode::PRAction;
+        self.ui.dirty = true;
     }
 
     /// Start request-changes action.
     pub fn start_pr_request_changes(&mut self) {
-        if !self.pr_mode || self.current_pr.is_none() {
-            self.error_msg = Some("Not in PR mode".to_string());
-            self.dirty = true;
+        if !self.pr.active || self.pr.current.is_none() {
+            self.ui.error = Some("Not in PR mode".to_string());
+            self.ui.dirty = true;
             return;
         }
 
-        self.pr_action_type = Some(PRActionType::RequestChanges);
-        self.pr_action_text.clear();
-        self.mode = Mode::PRAction;
-        self.dirty = true;
+        self.pr.action_type = Some(PRActionType::RequestChanges);
+        self.pr.action_text.clear();
+        self.ui.mode = Mode::PRAction;
+        self.ui.dirty = true;
     }
 
     /// Cancel current PR action.
     pub fn cancel_pr_action(&mut self) {
-        self.mode = Mode::Normal;
-        self.pr_action_type = None;
-        self.pr_action_text.clear();
-        self.dirty = true;
+        self.ui.mode = Mode::Normal;
+        self.pr.action_type = None;
+        self.pr.action_text.clear();
+        self.ui.dirty = true;
     }
 
     /// Submit the current PR action.
     pub fn submit_pr_action(&mut self) {
-        let Some(pr) = &self.current_pr else {
-            self.error_msg = Some("No PR selected".to_string());
+        let Some(pr) = &self.pr.current else {
+            self.ui.error = Some("No PR selected".to_string());
             self.cancel_pr_action();
             return;
         };
@@ -2231,30 +2252,30 @@ impl App {
         let pr_number = pr.number;
         let repo_path = self.repo.path().to_path_buf();
 
-        let result = match self.pr_action_type {
+        let result = match self.pr.action_type {
             Some(PRActionType::Approve) => {
-                let body = if self.pr_action_text.trim().is_empty() {
+                let body = if self.pr.action_text.trim().is_empty() {
                     None
                 } else {
-                    Some(self.pr_action_text.as_str())
+                    Some(self.pr.action_text.as_str())
                 };
                 crate::core::approve_pr(&repo_path, pr_number, body)
             }
             Some(PRActionType::Comment) => {
-                if self.pr_action_text.trim().is_empty() {
-                    self.error_msg = Some("Comment cannot be empty".to_string());
-                    self.dirty = true;
+                if self.pr.action_text.trim().is_empty() {
+                    self.ui.error = Some("Comment cannot be empty".to_string());
+                    self.ui.dirty = true;
                     return;
                 }
-                crate::core::comment_pr(&repo_path, pr_number, &self.pr_action_text)
+                crate::core::comment_pr(&repo_path, pr_number, &self.pr.action_text)
             }
             Some(PRActionType::RequestChanges) => {
-                if self.pr_action_text.trim().is_empty() {
-                    self.error_msg = Some("Message cannot be empty".to_string());
-                    self.dirty = true;
+                if self.pr.action_text.trim().is_empty() {
+                    self.ui.error = Some("Message cannot be empty".to_string());
+                    self.ui.dirty = true;
                     return;
                 }
-                crate::core::request_changes_pr(&repo_path, pr_number, &self.pr_action_text)
+                crate::core::request_changes_pr(&repo_path, pr_number, &self.pr.action_text)
             }
             None => {
                 self.cancel_pr_action();
@@ -2264,17 +2285,17 @@ impl App {
 
         match result {
             Ok(()) => {
-                let action_name = match self.pr_action_type {
+                let action_name = match self.pr.action_type {
                     Some(PRActionType::Approve) => "approved",
                     Some(PRActionType::Comment) => "commented on",
                     Some(PRActionType::RequestChanges) => "requested changes on",
                     None => "reviewed",
                 };
-                self.status_msg = Some(format!("PR #{} {}", pr_number, action_name));
-                self.error_msg = None;
+                self.ui.status = Some(format!("PR #{} {}", pr_number, action_name));
+                self.ui.error = None;
             }
             Err(e) => {
-                self.error_msg = Some(format!("Failed: {}", e));
+                self.ui.error = Some(format!("Failed: {}", e));
             }
         }
 

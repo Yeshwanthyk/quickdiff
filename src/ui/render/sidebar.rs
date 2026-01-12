@@ -29,13 +29,13 @@ pub fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     // Show filter indicator in title if active
-    let title = if app.filtered_indices.is_empty() {
+    let title = if app.sidebar.filtered_indices.is_empty() {
         format!(" Files ({}) ", app.viewed_status())
     } else {
         format!(
             " Files ({}) [filter: {}] ",
-            app.filtered_indices.len(),
-            app.sidebar_filter
+            app.sidebar.filtered_indices.len(),
+            app.sidebar.filter
         )
     };
 
@@ -54,10 +54,10 @@ pub fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     // Get visible file indices (filtered or all)
-    let visible_indices: Vec<usize> = if app.filtered_indices.is_empty() {
+    let visible_indices: Vec<usize> = if app.sidebar.filtered_indices.is_empty() {
         (0..app.files.len()).collect()
     } else {
-        app.filtered_indices.clone()
+        app.sidebar.filtered_indices.clone()
     };
 
     if visible_indices.is_empty() {
@@ -78,29 +78,29 @@ pub fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     // Find position of selected_idx in visible list
     let selected_pos = visible_indices
         .iter()
-        .position(|&idx| idx == app.selected_idx)
+        .position(|&idx| idx == app.sidebar.selected_idx)
         .unwrap_or(0);
 
     // Keep selection visible
     let max_scroll = visible_indices.len().saturating_sub(height);
-    app.sidebar_scroll = app.sidebar_scroll.min(max_scroll);
+    app.sidebar.scroll = app.sidebar.scroll.min(max_scroll);
 
-    if selected_pos < app.sidebar_scroll {
-        app.sidebar_scroll = selected_pos;
-    } else if selected_pos >= app.sidebar_scroll + height {
-        app.sidebar_scroll = selected_pos + 1 - height;
+    if selected_pos < app.sidebar.scroll {
+        app.sidebar.scroll = selected_pos;
+    } else if selected_pos >= app.sidebar.scroll + height {
+        app.sidebar.scroll = selected_pos + 1 - height;
     }
 
-    let end = (app.sidebar_scroll + height).min(visible_indices.len());
+    let end = (app.sidebar.scroll + height).min(visible_indices.len());
 
     let mut lines: Vec<Line> = Vec::with_capacity(height);
     for &idx in visible_indices
         .iter()
-        .skip(app.sidebar_scroll)
-        .take(end - app.sidebar_scroll)
+        .skip(app.sidebar.scroll)
+        .take(end - app.sidebar.scroll)
     {
         let file = &app.files[idx];
-        let is_selected = idx == app.selected_idx;
+        let is_selected = idx == app.sidebar.selected_idx;
         let is_viewed = app.viewed.is_viewed(&file.path);
 
         let row_bg = if is_selected {

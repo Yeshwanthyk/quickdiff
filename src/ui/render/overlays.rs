@@ -26,7 +26,7 @@ pub fn render_comments_overlay(frame: &mut Frame, app: &App) {
     let max_overlay_height = area.height.saturating_sub(4).max(1);
     let min_overlay_height = 6.min(max_overlay_height);
     let height =
-        (app.viewing_comments.len() as u16 + 4).clamp(min_overlay_height, max_overlay_height);
+        (app.comments.viewing.len() as u16 + 4).clamp(min_overlay_height, max_overlay_height);
 
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
@@ -34,7 +34,7 @@ pub fn render_comments_overlay(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, overlay_area);
 
-    let title = if app.viewing_include_resolved {
+    let title = if app.comments.include_resolved {
         " Comments (all) "
     } else {
         " Comments (open) "
@@ -60,7 +60,7 @@ pub fn render_comments_overlay(frame: &mut Frame, app: &App) {
         return;
     }
 
-    if app.viewing_comments.is_empty() {
+    if app.comments.viewing.is_empty() {
         lines.push(Line::from(Span::styled(
             "No comments",
             Style::default()
@@ -68,8 +68,8 @@ pub fn render_comments_overlay(frame: &mut Frame, app: &App) {
                 .bg(app.theme.bg_elevated),
         )));
     } else {
-        let total = app.viewing_comments.len();
-        let selected = app.viewing_comments_selected.min(total - 1);
+        let total = app.comments.viewing.len();
+        let selected = app.comments.selected.min(total - 1);
         let visible = inner.height as usize;
 
         let scroll = (selected + 1).saturating_sub(visible);
@@ -77,7 +77,7 @@ pub fn render_comments_overlay(frame: &mut Frame, app: &App) {
         let end = (scroll + visible).min(total);
 
         for idx in scroll..end {
-            let item = &app.viewing_comments[idx];
+            let item = &app.comments.viewing[idx];
             let is_selected = idx == selected;
 
             let row_bg = if is_selected {
@@ -381,19 +381,19 @@ pub fn render_pr_picker_overlay(frame: &mut Frame, app: &mut App) {
         Span::raw(" "),
         styled_filter_tab(
             "All",
-            app.pr_filter == crate::core::PRFilter::All,
+            app.pr.filter == crate::core::PRFilter::All,
             &app.theme,
         ),
         Span::raw("  "),
         styled_filter_tab(
             "Mine",
-            app.pr_filter == crate::core::PRFilter::Mine,
+            app.pr.filter == crate::core::PRFilter::Mine,
             &app.theme,
         ),
         Span::raw("  "),
         styled_filter_tab(
             "Review Requested",
-            app.pr_filter == crate::core::PRFilter::ReviewRequested,
+            app.pr.filter == crate::core::PRFilter::ReviewRequested,
             &app.theme,
         ),
         Span::raw(" "),
@@ -409,10 +409,10 @@ pub fn render_pr_picker_overlay(frame: &mut Frame, app: &mut App) {
         inner.height.saturating_sub(4),
     );
 
-    if app.pr_loading {
+    if app.pr.loading {
         let loading = Paragraph::new("Loading...").style(Style::default().fg(app.theme.text_muted));
         frame.render_widget(loading, list_area);
-    } else if app.pr_list.is_empty() {
+    } else if app.pr.list.is_empty() {
         let empty = Paragraph::new("No PRs found").style(Style::default().fg(app.theme.text_muted));
         frame.render_widget(empty, list_area);
     } else {
@@ -420,20 +420,20 @@ pub fn render_pr_picker_overlay(frame: &mut Frame, app: &mut App) {
         let visible_height = list_area.height as usize;
 
         // Keep selection visible (mirror sidebar scroll logic)
-        let max_scroll = app.pr_list.len().saturating_sub(visible_height);
-        app.pr_picker_scroll = app.pr_picker_scroll.min(max_scroll);
-        if app.pr_picker_selected < app.pr_picker_scroll {
-            app.pr_picker_scroll = app.pr_picker_selected;
-        } else if app.pr_picker_selected >= app.pr_picker_scroll + visible_height {
-            app.pr_picker_scroll = app.pr_picker_selected + 1 - visible_height;
+        let max_scroll = app.pr.list.len().saturating_sub(visible_height);
+        app.pr.picker_scroll = app.pr.picker_scroll.min(max_scroll);
+        if app.pr.picker_selected < app.pr.picker_scroll {
+            app.pr.picker_scroll = app.pr.picker_selected;
+        } else if app.pr.picker_selected >= app.pr.picker_scroll + visible_height {
+            app.pr.picker_scroll = app.pr.picker_selected + 1 - visible_height;
         }
 
-        let start = app.pr_picker_scroll;
-        let end = (start + visible_height).min(app.pr_list.len());
+        let start = app.pr.picker_scroll;
+        let end = (start + visible_height).min(app.pr.list.len());
 
-        for (i, pr) in app.pr_list[start..end].iter().enumerate() {
+        for (i, pr) in app.pr.list[start..end].iter().enumerate() {
             let y = list_area.y + i as u16;
-            let is_selected = start + i == app.pr_picker_selected;
+            let is_selected = start + i == app.pr.picker_selected;
 
             let style = if is_selected {
                 Style::default().bg(app.theme.accent).fg(app.theme.bg_dark)
@@ -506,7 +506,7 @@ pub fn render_pr_action_overlay(frame: &mut Frame, app: &App) {
     let y = (area.height.saturating_sub(height)) / 2;
     let action_area = Rect::new(x, y, width, height);
 
-    let title = match app.pr_action_type {
+    let title = match app.pr.action_type {
         Some(PRActionType::Approve) => " Approve PR ",
         Some(PRActionType::Comment) => " Comment on PR ",
         Some(PRActionType::RequestChanges) => " Request Changes ",
@@ -529,7 +529,7 @@ pub fn render_pr_action_overlay(frame: &mut Frame, app: &App) {
 
     // Show text input for comment/request-changes
     let show_input = matches!(
-        app.pr_action_type,
+        app.pr.action_type,
         Some(PRActionType::Comment) | Some(PRActionType::RequestChanges)
     );
 
@@ -538,7 +538,7 @@ pub fn render_pr_action_overlay(frame: &mut Frame, app: &App) {
             Paragraph::new("Message (required):").style(Style::default().fg(app.theme.text_muted));
         frame.render_widget(label, Rect::new(inner.x, inner.y, inner.width, 1));
 
-        let input_text = format!("{}_", &app.pr_action_text);
+        let input_text = format!("{}_", &app.pr.action_text);
         let input = Paragraph::new(input_text).style(Style::default().fg(app.theme.text_normal));
         frame.render_widget(input, Rect::new(inner.x, inner.y + 1, inner.width, 3));
     } else {

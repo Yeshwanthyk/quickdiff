@@ -242,7 +242,7 @@ fn run_tui(
     }
 
     // Check for empty changeset (skip in PR mode - files come from PR)
-    if app.files.is_empty() && !app.pr_mode && app.mode != quickdiff::ui::Mode::PRPicker {
+    if app.files.is_empty() && !app.pr.active && app.ui.mode != quickdiff::ui::Mode::PRPicker {
         println!("No changes detected");
         return Ok(());
     }
@@ -270,7 +270,7 @@ fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()>
         app.poll_watcher();
 
         // Only redraw if dirty or on resize
-        if app.dirty {
+        if app.ui.dirty {
             terminal.draw(|frame| render(frame, app))?;
             app.clear_dirty();
         }

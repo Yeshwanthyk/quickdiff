@@ -46,7 +46,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     bars::render_bottom_bar(frame, app, chunks[2]);
 
     // Overlays
-    match app.mode {
+    match app.ui.mode {
         Mode::ViewComments => overlays::render_comments_overlay(frame, app),
         Mode::SelectTheme => overlays::render_theme_selector(frame, app),
         Mode::Help => overlays::render_help_overlay(frame, app),
