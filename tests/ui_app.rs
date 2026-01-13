@@ -1,6 +1,6 @@
 use git2::{IndexAddOption, Repository, Signature};
 use quickdiff::core::{DiffSource, RepoRoot};
-use quickdiff::ui::{App, Mode};
+use quickdiff::ui::{App, DiffPaneMode, Focus, Mode};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -12,6 +12,8 @@ use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::Command;
 
 const FILE_ALPHA: &str = "alpha.txt";
 const FILE_RUST: &str = "src/lib.rs";
@@ -29,7 +31,9 @@ struct TestEnv {
 
 impl TestEnv {
     fn new() -> Self {
-        let guard = ENV_GUARD.lock().unwrap();
+        let guard = ENV_GUARD
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         let prev_home = std::env::var("HOME").ok();
         let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
         let home_dir = TempDir::new().unwrap();
@@ -91,7 +95,11 @@ impl RepoHarness {
 }
 
 #[cfg(unix)]
+static GH_GUARD: Mutex<()> = Mutex::new(());
+
+#[cfg(unix)]
 struct GhFixture {
+    _guard: MutexGuard<'static, ()>,
     dir: TempDir,
     log_path: PathBuf,
     prev_path: Option<String>,
@@ -101,6 +109,7 @@ struct GhFixture {
 #[cfg(unix)]
 impl GhFixture {
     fn new() -> Self {
+        let guard = GH_GUARD.lock().unwrap_or_else(|poison| poison.into_inner());
         let dir = TempDir::new().unwrap();
         let script_path = dir.path().join("gh");
         std::fs::write(&script_path, GH_SCRIPT).unwrap();
@@ -122,6 +131,7 @@ impl GhFixture {
         std::env::set_var("QUICKDIFF_TEST_GH_DIR", dir.path());
 
         Self {
+            _guard: guard,
             dir,
             log_path,
             prev_path,
@@ -339,6 +349,31 @@ fn sidebar_filter_limits_visible_files() {
 }
 
 #[test]
+fn apply_filter_reselects_first_match() {
+    let harness = RepoHarness::new();
+    let mut app = harness.app();
+    select_file(&mut app, FILE_RUST);
+    app.start_filter();
+    app.sidebar.filter = "notes".to_string();
+    app.apply_filter();
+    let selected_path = app.selected_file().unwrap().path.clone();
+    assert_eq!(selected_path.as_str(), FILE_NOTES);
+    assert_eq!(app.sidebar.filtered_indices.len(), 1);
+}
+
+#[test]
+fn cancel_filter_clears_state() {
+    let harness = RepoHarness::new();
+    let mut app = harness.app();
+    app.start_filter();
+    app.sidebar.filter = "notes".to_string();
+    app.cancel_filter();
+    assert_eq!(app.sidebar.filter, "");
+    assert!(app.sidebar.filtered_indices.is_empty());
+    assert_eq!(app.ui.mode, Mode::Normal);
+}
+
+#[test]
 fn comment_flow_updates_counts() {
     let harness = RepoHarness::new();
     let mut app = harness.app();
@@ -382,6 +417,34 @@ fn diff_view_toggle_preserves_position() {
     app.toggle_diff_view_mode();
     assert_eq!(app.viewer.scroll_y, initial_row);
     assert!(after_toggle <= initial_row || app.diff.is_some());
+}
+
+#[test]
+fn focus_toggle_switches_modes() {
+    let harness = RepoHarness::new();
+    let mut app = harness.app();
+    assert_eq!(app.focus, Focus::Sidebar);
+    app.toggle_focus();
+    assert_eq!(app.focus, Focus::Diff);
+    app.toggle_focus();
+    assert_eq!(app.focus, Focus::Sidebar);
+    app.set_focus(Focus::Diff);
+    assert_eq!(app.focus, Focus::Diff);
+}
+
+#[test]
+fn pane_fullscreen_toggles_cycle() {
+    let harness = RepoHarness::new();
+    let mut app = harness.app();
+    assert_eq!(app.viewer.pane_mode, DiffPaneMode::Both);
+    app.toggle_old_fullscreen();
+    assert_eq!(app.viewer.pane_mode, DiffPaneMode::OldOnly);
+    app.toggle_old_fullscreen();
+    assert_eq!(app.viewer.pane_mode, DiffPaneMode::Both);
+    app.toggle_new_fullscreen();
+    assert_eq!(app.viewer.pane_mode, DiffPaneMode::NewOnly);
+    app.toggle_new_fullscreen();
+    assert_eq!(app.viewer.pane_mode, DiffPaneMode::Both);
 }
 
 #[cfg(unix)]
@@ -496,4 +559,86 @@ fn pr_actions_issue_commands() {
             "review 9 --request-changes -b redo"
         ]
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn gh_fixture_handles_list_and_diff() {
+    let gh = GhFixture::new();
+    gh.write_pr_list(json!([
+        {
+            "number": 3,
+            "title": "Test",
+            "headRefName": "feature/test",
+            "baseRefName": "main",
+            "author": {"login": "ci"},
+            "additions": 1,
+            "deletions": 1,
+            "changedFiles": 1,
+            "isDraft": false
+        }
+    ]));
+    gh.write_diff(3, "diff --git a/a b/b\n");
+
+    let list = Command::new("gh").args(["pr", "list"]).output().unwrap();
+    assert!(list.status.success());
+    let stdout = String::from_utf8(list.stdout).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed[0]["number"], 3);
+
+    let diff = Command::new("gh")
+        .args(["pr", "diff", "3"])
+        .output()
+        .unwrap();
+    assert!(diff.status.success());
+    assert!(String::from_utf8(diff.stdout)
+        .unwrap()
+        .contains("diff --git"));
+}
+
+#[cfg(unix)]
+#[test]
+fn gh_fixture_logs_review_commands() {
+    let gh = GhFixture::new();
+    let status = Command::new("gh")
+        .args(["pr", "review", "12", "--comment", "-b", "hello"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    assert_eq!(gh.log_lines(), vec!["review 12 --comment -b hello"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn gh_fixture_view_command_records_log() {
+    let gh = GhFixture::new();
+    let status = Command::new("gh")
+        .args(["pr", "view", "21"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    assert_eq!(gh.log_lines(), vec!["view 21"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn gh_fixture_auth_status_succeeds_without_logging() {
+    let gh = GhFixture::new();
+    let status = Command::new("gh")
+        .args(["auth", "status"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    assert!(gh.log_lines().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn gh_fixture_unknown_command_fails_and_logs() {
+    let gh = GhFixture::new();
+    let status = Command::new("gh").args(["issue", "list"]).output().unwrap();
+    assert!(!status.status.success());
+    let logs = gh.log_lines();
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].starts_with("unexpected gh invocation"));
 }

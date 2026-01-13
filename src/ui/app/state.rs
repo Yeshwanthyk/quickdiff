@@ -3,7 +3,9 @@ use crate::core::{CommentStatus, PRChangedFile, PRFilter, PullRequest};
 /// Focus state for the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
+    /// Sidebar focus (file list navigation).
     Sidebar,
+    /// Diff pane focus.
     Diff,
 }
 
