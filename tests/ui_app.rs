@@ -1,6 +1,7 @@
 use git2::{IndexAddOption, Repository, Signature};
 use quickdiff::core::{DiffSource, RepoRoot};
 use quickdiff::ui::{App, DiffPaneMode, Focus, Mode};
+use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -84,13 +85,11 @@ impl RepoHarness {
     }
 
     fn app(&self) -> App {
-        App::new(
-            self.repo.clone(),
-            DiffSource::WorkingTree,
-            None,
-            Some("default"),
-        )
-        .unwrap()
+        self.app_with_source(DiffSource::WorkingTree)
+    }
+
+    fn app_with_source(&self, source: DiffSource) -> App {
+        App::new(self.repo.clone(), source, None, Some("default")).unwrap()
     }
 }
 
@@ -420,6 +419,20 @@ fn diff_view_toggle_preserves_position() {
 }
 
 #[test]
+fn manual_reload_refreshes_worktree_files() {
+    let harness = RepoHarness::new();
+    let mut app = harness.app();
+    let initial_len = app.files.len();
+    let new_path = harness.repo.path().join("beta.txt");
+    fs::write(&new_path, "beta\n").unwrap();
+    app.manual_reload();
+    wait_for_diff(&mut app);
+    assert!(app.files.iter().any(|f| f.path.as_str() == "beta.txt"));
+    assert!(app.ui.status.as_deref() == Some("Refreshed"));
+    assert!(app.files.len() > initial_len);
+}
+
+#[test]
 fn focus_toggle_switches_modes() {
     let harness = RepoHarness::new();
     let mut app = harness.app();
@@ -445,6 +458,18 @@ fn pane_fullscreen_toggles_cycle() {
     assert_eq!(app.viewer.pane_mode, DiffPaneMode::NewOnly);
     app.toggle_new_fullscreen();
     assert_eq!(app.viewer.pane_mode, DiffPaneMode::Both);
+}
+
+#[test]
+fn manual_reload_sets_status_for_commit_mode() {
+    let harness = RepoHarness::new();
+    let repo = Repository::open(harness.repo.path()).unwrap();
+    let head = repo.head().unwrap().target().unwrap().to_string();
+    let mut app = harness.app_with_source(DiffSource::Commit(head));
+    wait_for_diff(&mut app);
+    app.manual_reload();
+    wait_for_diff(&mut app);
+    assert_eq!(app.ui.status.as_deref(), Some("Reloaded current diff"));
 }
 
 #[cfg(unix)]
