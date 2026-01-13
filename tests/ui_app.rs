@@ -314,7 +314,7 @@ fn app_loads_diff_for_selected_file() {
     let harness = RepoHarness::new();
     let mut app = harness.app();
     select_file(&mut app, FILE_RUST);
-    assert!(app.diff.as_ref().is_some_and(|d| d.rows().len() > 0));
+    assert!(app.diff.as_ref().is_some_and(|d| !d.rows().is_empty()));
     assert!(app.old_buffer.is_some());
     assert!(app.new_buffer.is_some());
 }
@@ -387,7 +387,7 @@ fn comment_flow_updates_counts() {
     assert_eq!(app.ui.mode, Mode::ViewComments);
     assert_eq!(app.comments.viewing.len(), 1);
     app.comments_resolve_selected();
-    assert!(app.open_comment_counts.get(&path).is_none());
+    assert!(!app.open_comment_counts.contains_key(&path));
 }
 
 #[test]
