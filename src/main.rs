@@ -82,8 +82,10 @@ impl Drop for TerminalGuard {
 /// Returns (index, subcommand) if found.
 fn find_subcommand(args: &[String]) -> Option<(usize, &str)> {
     const SUBCOMMANDS: &[&str] = &["comments", "web"];
-    const FLAGS_WITH_VALUES: &[&str] = &["-c", "--commit", "-b", "--base", "-f", "--file", "-t", "--theme", "--pr"];
-    
+    const FLAGS_WITH_VALUES: &[&str] = &[
+        "-c", "--commit", "-b", "--base", "-f", "--file", "-t", "--theme", "--pr",
+    ];
+
     let mut i = 1; // skip program name
     while i < args.len() {
         let arg = &args[i];
@@ -208,8 +210,12 @@ fn run_cli_comments(args: &[String]) -> ExitCode {
     run_comments_command(&repo, args)
 }
 
+/// Embedded web template (compiled into binary).
+const WEB_TEMPLATE: &str = include_str!("../web/template.html");
+
 /// Run CLI web preview command.
 fn run_cli_web(args: &[String]) -> ExitCode {
+    use base64::Engine;
     use std::io::Read;
 
     // Parse web subcommand args
@@ -241,16 +247,6 @@ fn run_cli_web(args: &[String]) -> ExitCode {
             }
         }
         i += 1;
-    }
-
-    // Check for bun
-    if std::process::Command::new("bun")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        eprintln!("Error: bun not found; install bun to use web preview");
-        return ExitCode::from(1);
     }
 
     // Read stdin patch if requested
@@ -334,94 +330,42 @@ fn run_cli_web(args: &[String]) -> ExitCode {
         format!("/tmp/quickdiff-{}.html", timestamp)
     });
 
-    // Write JSON to temp file
-    let json_path = format!("{}.json", out_file);
-    let json_data = match serde_json::to_string_pretty(&review_data) {
+    // Serialize and base64 encode JSON
+    let json_data = match serde_json::to_string(&review_data) {
         Ok(j) => j,
         Err(e) => {
             eprintln!("Error serializing review data: {}", e);
             return ExitCode::from(1);
         }
     };
-    if let Err(e) = std::fs::write(&json_path, &json_data) {
-        eprintln!("Error writing JSON: {}", e);
+    let b64_data = base64::engine::general_purpose::STANDARD.encode(&json_data);
+
+    // Render template
+    let html = WEB_TEMPLATE
+        .replace("{{REVIEW_DATA_B64}}", &b64_data)
+        .replace("{{BRANCH}}", &review_data.branch)
+        .replace("{{COMMIT}}", &review_data.commit);
+
+    // Write output
+    if let Err(e) = std::fs::write(&out_file, &html) {
+        eprintln!("Error writing HTML: {}", e);
         return ExitCode::from(1);
     }
 
-    // Find template and render script
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+    println!("Generated: {}", out_file);
 
-    let template_path = exe_dir
-        .as_ref()
-        .map(|d| d.join("../share/quickdiff/template.html"))
-        .filter(|p| p.exists())
-        .or_else(|| {
-            // Fallback to project directory during development
-            std::env::var("CARGO_MANIFEST_DIR")
-                .ok()
-                .map(|d| std::path::PathBuf::from(d).join("web/template.html"))
-        })
-        .unwrap_or_else(|| std::path::PathBuf::from("web/template.html"));
-
-    let render_script = exe_dir
-        .as_ref()
-        .map(|d| d.join("../share/quickdiff/web_render.ts"))
-        .filter(|p| p.exists())
-        .or_else(|| {
-            std::env::var("CARGO_MANIFEST_DIR")
-                .ok()
-                .map(|d| std::path::PathBuf::from(d).join("scripts/web_render.ts"))
-        })
-        .unwrap_or_else(|| std::path::PathBuf::from("scripts/web_render.ts"));
-
-    if !template_path.exists() {
-        eprintln!("Error: template not found at {:?}", template_path);
-        return ExitCode::from(1);
+    if open_browser {
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg(&out_file).status();
+        #[cfg(target_os = "linux")]
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&out_file)
+            .status();
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("start").arg(&out_file).status();
     }
 
-    if !render_script.exists() {
-        eprintln!("Error: render script not found at {:?}", render_script);
-        return ExitCode::from(1);
-    }
-
-    // Run bun to render HTML
-    let status = std::process::Command::new("bun")
-        .arg("run")
-        .arg(&render_script)
-        .arg(&template_path)
-        .arg(&json_path)
-        .arg(&out_file)
-        .status();
-
-    // Cleanup JSON temp file
-    let _ = std::fs::remove_file(&json_path);
-
-    match status {
-        Ok(s) if s.success() => {
-            println!("Generated: {}", out_file);
-            if open_browser {
-                #[cfg(target_os = "macos")]
-                let _ = std::process::Command::new("open").arg(&out_file).status();
-                #[cfg(target_os = "linux")]
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(&out_file)
-                    .status();
-                #[cfg(target_os = "windows")]
-                let _ = std::process::Command::new("start").arg(&out_file).status();
-            }
-            ExitCode::SUCCESS
-        }
-        Ok(_) => {
-            eprintln!("Error: bun render failed");
-            ExitCode::from(1)
-        }
-        Err(e) => {
-            eprintln!("Error running bun: {}", e);
-            ExitCode::from(1)
-        }
-    }
+    ExitCode::SUCCESS
 }
 
 /// Run TUI in patch mode (stdin input).
