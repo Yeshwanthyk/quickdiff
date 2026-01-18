@@ -21,8 +21,8 @@ case "$OS" in
     ;;
   Linux)
     case "$ARCH" in
-      aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
       x86_64) TARGET="x86_64-unknown-linux-gnu" ;;
+      aarch64) echo "Linux ARM not supported. Use: cargo install quickdiff"; exit 1 ;;
       *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
     esac
     ;;
