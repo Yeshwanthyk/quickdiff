@@ -12,7 +12,7 @@
 
 ## Progress Tracking
 - [x] Phase 1: Stdin Patch Mode in TUI
-- [ ] Phase 2: Patch Generation + Web Data Assembly
+- [x] Phase 2: Patch Generation + Web Data Assembly
 - [ ] Phase 3: Web Render + CLI Web Entry
 
 ## Overview
@@ -513,9 +513,9 @@ Build unified patch strings for git/jj sources and serialize `review.json` for w
 - [ ] Phase 1 manual verification complete
 
 ### Change Checklist
-- [ ] Add `web` module with patch builders
-- [ ] Add JSON schema for web template
-- [ ] Add file stats from patch parsing
+- [x] Add `web` module with patch builders
+- [x] Add JSON schema for web template
+- [x] Add file stats from patch parsing
 
 ### Changes
 

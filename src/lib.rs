@@ -21,3 +21,4 @@ pub mod metrics;
 pub mod prelude;
 pub mod theme;
 pub mod ui;
+pub mod web;
