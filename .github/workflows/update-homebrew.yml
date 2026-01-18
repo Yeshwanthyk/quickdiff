@@ -38,7 +38,11 @@ jobs:
 
       - name: Update formula
         run: |
-          cat > homebrew-tools/Formula/quickdiff.rb << 'EOF'
+          VERSION="${{ env.VERSION }}"
+          ARM64_SHA="${{ env.ARM64_SHA }}"
+          LINUX_SHA="${{ env.LINUX_SHA }}"
+          
+          cat > homebrew-tools/Formula/quickdiff.rb << EOF
           class Quickdiff < Formula
             desc "Fast, keyboard-driven terminal diff viewer for git and jj repositories"
             homepage "https://github.com/Yeshwanthyk/quickdiff"
@@ -46,15 +50,15 @@ jobs:
 
             on_macos do
               url "https://github.com/Yeshwanthyk/quickdiff/releases/download/v#{version}/quickdiff-aarch64-apple-darwin.tar.gz"
-              sha256 "QUICKDIFF_ARM64_SHA"
+              sha256 "${ARM64_SHA}"
             end
 
             on_linux do
               url "https://github.com/Yeshwanthyk/quickdiff/releases/download/v#{version}/quickdiff-x86_64-unknown-linux-gnu.tar.gz"
-              sha256 "QUICKDIFF_LINUX_SHA"
+              sha256 "${LINUX_SHA}"
             end
 
-            version "QUICKDIFF_VERSION"
+            version "${VERSION}"
 
             def install
               bin.install "quickdiff"
@@ -65,10 +69,6 @@ jobs:
             end
           end
           EOF
-          
-          sed -i "s/QUICKDIFF_VERSION/${{ env.VERSION }}/g" homebrew-tools/Formula/quickdiff.rb
-          sed -i "s/QUICKDIFF_ARM64_SHA/${{ env.ARM64_SHA }}/g" homebrew-tools/Formula/quickdiff.rb
-          sed -i "s/QUICKDIFF_LINUX_SHA/${{ env.LINUX_SHA }}/g" homebrew-tools/Formula/quickdiff.rb
 
       - name: Commit and push
         run: |
