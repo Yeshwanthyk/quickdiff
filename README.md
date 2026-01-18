@@ -2,6 +2,8 @@
 
 A fast, keyboard-driven terminal diff viewer for git and jj repositories.
 
+![quickdiff screenshot](assets/screenshot.png)
+
 ## Install
 
 **macOS / Linux:**
@@ -91,14 +93,18 @@ Subcommands:
 
 ## Features
 
-- Works with git and jj repositories
-- Syntax highlighting (Rust, TypeScript, Go, Python, and more)
-- Word-level inline diff highlighting
-- Sticky function/class headers while scrolling
-- Watch mode auto-refreshes on file changes
-- Persistent viewed state across sessions
-- 17 built-in themes with live preview
-- Mouse support
+- **Opens at first change** - Jump straight to the first hunk, not the top of file
+- **Hunks-only view** - See just the changed sections with context; press `z` to toggle full file
+- **Split diff view** - Side-by-side old/new with synchronized scrolling
+- **Word-level highlighting** - Inline highlights show exactly what changed within lines
+- **Syntax highlighting** - Tree-sitter powered for Rust, TypeScript, Go, Python, and more
+- **Sticky headers** - Function/class scope stays pinned while scrolling
+- **17 themes** - Press `T` for live preview; set with `--theme`
+- **Watch mode** - Auto-refreshes when files change
+- **Viewed tracking** - Mark files done with `Space`; state persists across sessions
+- **Works with git and jj** - Full support for both, including jj revsets
+- **Pager mode** - Pipe any diff: `git diff | quickdiff --stdin`
+- **Web export** - Generate standalone HTML: `quickdiff web HEAD~1 --open`
 
 ## Themes
 
