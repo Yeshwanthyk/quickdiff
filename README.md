@@ -18,7 +18,45 @@ quickdiff @-..@               # JJ working copy range example
 quickdiff -b <branch>         # Diff against merge-base with a branch
 quickdiff -f <path>           # Limit to the given files/directories
 quickdiff comments list|add|resolve
+
+# Pager mode (stdin)
+git diff | quickdiff --stdin  # Render unified diff from pipe
+jj diff | quickdiff --stdin   # Works with any diff source
+
+# Web preview
+quickdiff web HEAD~1          # Generate standalone HTML
+quickdiff web --open          # Open in browser
+git diff | quickdiff web --stdin --open
 ```
+
+### Pager Mode (stdin)
+
+Use `--stdin` to render any unified diff in the TUI:
+
+```bash
+# Use as lazygit pager
+# ~/.config/lazygit/config.yml
+# git:
+#   paging:
+#     pager: quickdiff --stdin
+
+# Pipe from git/jj
+git diff HEAD~3 | quickdiff --stdin
+jj diff -r @-..@ | quickdiff --stdin
+```
+
+### Web Preview
+
+Generate standalone HTML diffs with `quickdiff web`:
+
+```bash
+quickdiff web HEAD~1              # Generate HTML for commit
+quickdiff web HEAD~1 --open       # Open in browser
+quickdiff web -b main --open      # Diff against main branch
+git diff | quickdiff web --stdin  # Generate from piped diff
+```
+
+Requires [Bun](https://bun.sh) for HTML rendering.
 
 ### Jujutsu (jj) Support
 

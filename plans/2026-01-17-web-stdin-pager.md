@@ -3,7 +3,7 @@
 ## Plan Metadata
 - Created: 2026-01-17
 - Ticket: none
-- Status: in-progress
+- Status: completed
 - Owner: yesh
 - Assumptions:
   - Bun is available for HTML render step (per request for Bun support).
@@ -13,7 +13,7 @@
 ## Progress Tracking
 - [x] Phase 1: Stdin Patch Mode in TUI
 - [x] Phase 2: Patch Generation + Web Data Assembly
-- [ ] Phase 3: Web Render + CLI Web Entry
+- [x] Phase 3: Web Render + CLI Web Entry
 
 ## Overview
 Add a patch-first web preview flow using `@pierre/diffs` plus a `--stdin` pager mode that renders unified diffs in the existing TUI. Web output is standalone HTML with client-side `@pierre/diffs` rendering.
@@ -778,9 +778,9 @@ Add `quickdiff web` CLI entrypoint, generate HTML via Bun render script, and doc
 - [ ] Phase 2 manual verification complete
 
 ### Change Checklist
-- [ ] Add web CLI handler in `src/main.rs`
-- [ ] Add `web/template.html` and `scripts/web_render.ts`
-- [ ] Add README examples for web and lazygit pager
+- [x] Add web CLI handler in `src/main.rs`
+- [x] Add `web/template.html` and `scripts/web_render.ts`
+- [x] Add README examples for web and lazygit pager
 
 ### Changes
 

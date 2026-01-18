@@ -79,10 +79,13 @@ impl Drop for TerminalGuard {
 }
 
 fn main() -> ExitCode {
-    // Check for comments subcommand first (before clap parsing)
+    // Check for subcommands first (before clap parsing)
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("comments") {
         return run_cli_comments(&args[2..]);
+    }
+    if args.get(1).map(|s| s.as_str()) == Some("web") {
+        return run_cli_web(&args[2..]);
     }
 
     // Parse CLI args
@@ -175,6 +178,222 @@ fn run_cli_comments(args: &[String]) -> ExitCode {
     };
 
     run_comments_command(&repo, args)
+}
+
+/// Run CLI web preview command.
+fn run_cli_web(args: &[String]) -> ExitCode {
+    use std::io::Read;
+
+    // Parse web subcommand args
+    let mut stdin_mode = false;
+    let mut open_browser = false;
+    let mut output_path: Option<String> = None;
+    let mut file_filter: Option<String> = None;
+    let mut diffspec: Option<String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--stdin" => stdin_mode = true,
+            "--open" | "-o" => open_browser = true,
+            "--output" => {
+                i += 1;
+                output_path = args.get(i).cloned();
+            }
+            "--file" | "-f" => {
+                i += 1;
+                file_filter = args.get(i).cloned();
+            }
+            arg if !arg.starts_with('-') => {
+                diffspec = Some(arg.to_string());
+            }
+            _ => {
+                eprintln!("Unknown option: {}", args[i]);
+                return ExitCode::from(1);
+            }
+        }
+        i += 1;
+    }
+
+    // Check for bun
+    if std::process::Command::new("bun")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("Error: bun not found; install bun to use web preview");
+        return ExitCode::from(1);
+    }
+
+    // Read stdin patch if requested
+    let stdin_patch = if stdin_mode {
+        let mut patch = String::new();
+        if let Err(e) = io::stdin().read_to_string(&mut patch) {
+            eprintln!("Error reading stdin: {}", e);
+            return ExitCode::from(1);
+        }
+        if patch.trim().is_empty() {
+            eprintln!("Error: empty input from stdin");
+            return ExitCode::from(1);
+        }
+        Some(patch)
+    } else {
+        None
+    };
+
+    // Discover repository
+    let cwd = match std::env::current_dir() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to get current directory: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let repo = match RepoRoot::discover(&cwd) {
+        Ok(repo) => repo,
+        Err(quickdiff::core::RepoError::NotARepo) => {
+            eprintln!("Error: Not inside a git or jj repository");
+            return ExitCode::from(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // Determine diff source from diffspec
+    let source = if let Some(ref spec) = diffspec {
+        if let Some(idx) = spec.find("..") {
+            let from = &spec[..idx];
+            let to = &spec[idx + 2..];
+            let to = to.strip_prefix('.').unwrap_or(to);
+            DiffSource::Range {
+                from: from.to_string(),
+                to: to.to_string(),
+            }
+        } else if spec.contains('/') && !spec.contains(':') {
+            DiffSource::Base(spec.clone())
+        } else {
+            DiffSource::Commit(spec.clone())
+        }
+    } else {
+        DiffSource::WorkingTree
+    };
+
+    // Build review data
+    let input = quickdiff::web::WebInput {
+        source,
+        stdin_patch,
+        file_filter,
+        label: diffspec.unwrap_or_default(),
+    };
+
+    let review_data = match quickdiff::web::build_review_data(&repo, input) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Error building review data: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // Determine output path
+    let out_file = output_path.unwrap_or_else(|| {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!("/tmp/quickdiff-{}.html", timestamp)
+    });
+
+    // Write JSON to temp file
+    let json_path = format!("{}.json", out_file);
+    let json_data = match serde_json::to_string_pretty(&review_data) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("Error serializing review data: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+    if let Err(e) = std::fs::write(&json_path, &json_data) {
+        eprintln!("Error writing JSON: {}", e);
+        return ExitCode::from(1);
+    }
+
+    // Find template and render script
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+    let template_path = exe_dir
+        .as_ref()
+        .map(|d| d.join("../share/quickdiff/template.html"))
+        .filter(|p| p.exists())
+        .or_else(|| {
+            // Fallback to project directory during development
+            std::env::var("CARGO_MANIFEST_DIR")
+                .ok()
+                .map(|d| std::path::PathBuf::from(d).join("web/template.html"))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("web/template.html"));
+
+    let render_script = exe_dir
+        .as_ref()
+        .map(|d| d.join("../share/quickdiff/web_render.ts"))
+        .filter(|p| p.exists())
+        .or_else(|| {
+            std::env::var("CARGO_MANIFEST_DIR")
+                .ok()
+                .map(|d| std::path::PathBuf::from(d).join("scripts/web_render.ts"))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("scripts/web_render.ts"));
+
+    if !template_path.exists() {
+        eprintln!("Error: template not found at {:?}", template_path);
+        return ExitCode::from(1);
+    }
+
+    if !render_script.exists() {
+        eprintln!("Error: render script not found at {:?}", render_script);
+        return ExitCode::from(1);
+    }
+
+    // Run bun to render HTML
+    let status = std::process::Command::new("bun")
+        .arg("run")
+        .arg(&render_script)
+        .arg(&template_path)
+        .arg(&json_path)
+        .arg(&out_file)
+        .status();
+
+    // Cleanup JSON temp file
+    let _ = std::fs::remove_file(&json_path);
+
+    match status {
+        Ok(s) if s.success() => {
+            println!("Generated: {}", out_file);
+            if open_browser {
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open").arg(&out_file).status();
+                #[cfg(target_os = "linux")]
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&out_file)
+                    .status();
+                #[cfg(target_os = "windows")]
+                let _ = std::process::Command::new("start").arg(&out_file).status();
+            }
+            ExitCode::SUCCESS
+        }
+        Ok(_) => {
+            eprintln!("Error: bun render failed");
+            ExitCode::from(1)
+        }
+        Err(e) => {
+            eprintln!("Error running bun: {}", e);
+            ExitCode::from(1)
+        }
+    }
 }
 
 /// Run TUI in patch mode (stdin input).
