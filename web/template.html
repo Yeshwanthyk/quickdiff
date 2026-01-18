@@ -290,14 +290,19 @@
           diffIndicators: 'bars',
           lineDiffType: 'word-alt',
           disableBackground: true,
+          disableLineNumbers: false,
           overflow: 'scroll',
           unsafeCSS: `
             pre, code, span, [data-line] {
               font-family: 'Berkeley Mono', 'SF Mono', 'Menlo', monospace !important;
-              font-size: 13px !important;
-              line-height: 20px !important;
+              font-size: 15px !important;
+              line-height: 22px !important;
               font-feature-settings: "liga" 0, "calt" 0 !important;
               font-variant-ligatures: none !important;
+            }
+            .diff-line-number {
+              font-size: 12px !important;
+              opacity: 0.5;
             }
           `,
         }).render({ fileDiff, containerWrapper: diffContainer, lineAnnotations: [] });
