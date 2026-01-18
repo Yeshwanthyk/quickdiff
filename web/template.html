@@ -1,277 +1,335 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{BRANCH}} @ {{COMMIT}}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
+    @font-face {
+      font-family: 'Berkeley Mono';
+      src: local('Berkeley Mono'), local('BerkeleyMono-Regular');
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: 'Berkeley Mono';
+      src: local('Berkeley Mono Bold'), local('BerkeleyMono-Bold');
+      font-weight: 600;
+    }
+
     :root {
-      --bg: #1a1b26;
-      --fg: #c0caf5;
-      --border: #3b4261;
-      --accent: #7aa2f7;
-      --add: #9ece6a;
-      --del: #f7768e;
-      --sidebar-bg: #16161e;
-      --hover: #24283b;
+      --bg-deep: #09090b;
+      --bg-base: #0c0c0e;
+      --bg-elevated: #141417;
+      --bg-hover: #1a1a1f;
+      --border-subtle: rgba(255,255,255,0.06);
+      --border-medium: rgba(255,255,255,0.1);
+      --text-primary: #fafafa;
+      --text-secondary: #a1a1aa;
+      --text-tertiary: #52525b;
+      --accent: #3b82f6;
+      --accent-muted: rgba(59,130,246,0.15);
+      --add: #22c55e;
+      --add-muted: rgba(34,197,94,0.15);
+      --del: #ef4444;
+      --del-muted: rgba(239,68,68,0.15);
+      --font-sans: 'Inter', -apple-system, sans-serif;
+      --font-mono: 'Berkeley Mono', 'SF Mono', 'Menlo', monospace;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 13px;
-      line-height: 1.5;
-      background: var(--bg);
-      color: var(--fg);
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 14px; -webkit-font-smoothing: antialiased; }
+    body { font-family: var(--font-sans); background: var(--bg-deep); color: var(--text-primary); min-height: 100vh; }
+
+    /* Header */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg-base);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 16px 32px;
     }
-    .container {
+
+    .header-top {
       display: flex;
-      height: 100vh;
-    }
-    .sidebar {
-      width: 280px;
-      background: var(--sidebar-bg);
-      border-right: 1px solid var(--border);
-      overflow-y: auto;
-      flex-shrink: 0;
-    }
-    .sidebar-header {
-      padding: 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .sidebar-header h1 {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--accent);
-      margin-bottom: 4px;
-    }
-    .sidebar-header .commit {
-      font-size: 12px;
-      color: #7982a9;
-    }
-    .file-list {
-      list-style: none;
-    }
-    .file-item {
-      padding: 8px 16px;
-      cursor: pointer;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
       align-items: center;
+      gap: 12px;
     }
-    .file-item:hover {
-      background: var(--hover);
-    }
-    .file-item.active {
-      background: var(--hover);
-      border-left: 2px solid var(--accent);
-    }
-    .file-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      flex: 1;
-    }
-    .file-stats {
-      font-size: 11px;
-      margin-left: 8px;
-      flex-shrink: 0;
-    }
-    .file-stats .add { color: var(--add); }
-    .file-stats .del { color: var(--del); }
-    .main {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px;
-    }
-    .diff-container {
-      background: var(--sidebar-bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      overflow: hidden;
-    }
-    .diff-header {
-      padding: 12px 16px;
-      background: var(--hover);
-      border-bottom: 1px solid var(--border);
-      font-weight: 600;
-    }
-    .diff-content {
-      overflow-x: auto;
-    }
-    .diff-content pre {
-      margin: 0;
-      padding: 0;
-    }
-    .diff-line {
-      display: block;
-      padding: 0 16px;
-      white-space: pre;
-    }
-    .diff-line.add {
-      background: rgba(158, 206, 106, 0.15);
-      color: var(--add);
-    }
-    .diff-line.del {
-      background: rgba(247, 118, 142, 0.15);
-      color: var(--del);
-    }
-    .diff-line.hunk {
-      background: rgba(122, 162, 247, 0.1);
+
+    .branch {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
       color: var(--accent);
+      background: var(--accent-muted);
+      padding: 4px 10px;
+      border-radius: 4px;
     }
-    .empty-state {
+
+    .commit {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-tertiary);
+    }
+
+    .stats {
+      display: flex;
+      gap: 12px;
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+    }
+
+    .stats .files { color: var(--text-secondary); }
+    .stats .add { color: var(--add); }
+    .stats .del { color: var(--del); }
+
+    .summary {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      margin-top: 8px;
+    }
+
+    /* Main */
+    .main {
+      padding: 24px 32px 80px;
+    }
+
+    .file-section {
+      margin-bottom: 24px;
+    }
+
+    .file-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px 6px 0 0;
+      border-bottom: none;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .file-header:hover {
+      background: var(--bg-hover);
+    }
+
+    .file-section.collapsed .file-header {
+      border-radius: 6px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .file-section.collapsed .diff-container {
+      display: none;
+    }
+
+    .file-header .toggle {
+      color: var(--text-tertiary);
+      font-size: 0.75rem;
+      margin-right: 8px;
+      width: 12px;
+    }
+
+    .file-header .path {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .file-header .changes {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      display: flex;
+      gap: 8px;
+    }
+
+    .file-header .add { color: var(--add); }
+    .file-header .del { color: var(--del); }
+
+    .diff-container {
+      border: 1px solid var(--border-subtle);
+      border-radius: 0 0 6px 6px;
+      overflow: hidden;
+      background: var(--bg-base);
+    }
+
+    /* Keyboard hints */
+    .hints {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      display: flex;
+      gap: 12px;
+      padding: 8px 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      font-size: 0.7rem;
+      color: var(--text-tertiary);
+    }
+
+    .hints kbd {
+      padding: 2px 5px;
+      background: var(--bg-hover);
+      border-radius: 3px;
+      font-family: var(--font-mono);
+    }
+
+    /* Empty state */
+    .empty {
       text-align: center;
       padding: 48px;
-      color: #7982a9;
-    }
-    .summary-stats {
-      display: flex;
-      gap: 16px;
-      padding: 16px;
-      border-bottom: 1px solid var(--border);
-      font-size: 12px;
-    }
-    .summary-stats span {
-      display: flex;
-      align-items: center;
-      gap: 4px;
+      color: var(--text-tertiary);
     }
   </style>
 </head>
 <body>
-  <script type="application/json" id="review-data">{{REVIEW_DATA_JSON}}</script>
-  <div class="container">
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <h1 id="branch-name">Loading...</h1>
-        <span class="commit" id="commit-hash"></span>
+  <header class="header">
+    <div class="header-top">
+      <span class="branch" id="branch">{{BRANCH}}</span>
+      <span class="commit" id="commit">{{COMMIT}}</span>
+      <div class="stats">
+        <span class="files" id="file-count"></span>
+        <span class="add" id="total-add"></span>
+        <span class="del" id="total-del"></span>
       </div>
-      <div class="summary-stats" id="summary-stats"></div>
-      <ul class="file-list" id="file-list"></ul>
-    </aside>
-    <main class="main" id="main-content">
-      <div class="empty-state">Select a file to view diff</div>
-    </main>
+    </div>
+    <div class="summary" id="summary"></div>
+  </header>
+
+  <main class="main" id="main">
+    <div class="empty">Loading...</div>
+  </main>
+
+  <div class="hints">
+    <span><kbd>j</kbd>/<kbd>k</kbd> navigate files</span>
+    <span><kbd>r</kbd> toggle collapse</span>
   </div>
 
   <script type="module">
-    // Parse embedded data
+    import { FileDiff, parsePatchFiles } from 'https://esm.sh/@pierre/diffs@1.0.6';
+
     const dataEl = document.getElementById('review-data');
-    const data = JSON.parse(dataEl?.textContent || '{}');
+    let DATA;
+    
+    // Support both inline JSON and base64 encoded
+    const rawJson = `{{REVIEW_DATA_JSON}}`;
+    try {
+      DATA = JSON.parse(rawJson);
+    } catch {
+      DATA = { files: [], patch: '', branch: '', commit: '', summary: '' };
+    }
+
+    const escapeHtml = (str) => String(str)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
 
     // Update header
-    document.getElementById('branch-name').textContent = data.branch || 'Unknown';
-    document.getElementById('commit-hash').textContent = data.commit || '';
-    document.title = `${data.branch || 'Diff'} @ ${data.commit || ''}`;
+    document.getElementById('branch').textContent = DATA.branch || 'Unknown';
+    document.getElementById('commit').textContent = DATA.commit || '';
+    document.getElementById('summary').textContent = DATA.summary || '';
 
     // Calculate totals
-    const totalAdd = data.files?.reduce((sum, f) => sum + (f.additions || 0), 0) || 0;
-    const totalDel = data.files?.reduce((sum, f) => sum + (f.deletions || 0), 0) || 0;
-    document.getElementById('summary-stats').innerHTML = `
-      <span><strong>${data.files?.length || 0}</strong> files</span>
-      <span class="add">+${totalAdd}</span>
-      <span class="del">-${totalDel}</span>
-    `;
+    const totalAdd = DATA.files?.reduce((sum, f) => sum + (f.additions || 0), 0) || 0;
+    const totalDel = DATA.files?.reduce((sum, f) => sum + (f.deletions || 0), 0) || 0;
+    document.getElementById('file-count').textContent = `${DATA.files?.length || 0} files`;
+    document.getElementById('total-add').textContent = `+${totalAdd}`;
+    document.getElementById('total-del').textContent = `-${totalDel}`;
 
-    // Parse patch into per-file patches
-    function parsePatch(patch) {
-      const files = {};
-      if (!patch) return files;
-      
-      const lines = patch.split('\n');
-      let currentFile = null;
-      let currentPatch = [];
-      
-      for (const line of lines) {
-        if (line.startsWith('diff --git ')) {
-          if (currentFile) {
-            files[currentFile] = currentPatch.join('\n');
-          }
-          // Extract filename from "diff --git a/path b/path"
-          const match = line.match(/diff --git a\/(.*) b\/(.*)/);
-          currentFile = match ? match[2] : null;
-          currentPatch = [line];
-        } else if (currentFile) {
-          currentPatch.push(line);
-        }
-      }
-      
-      if (currentFile) {
-        files[currentFile] = currentPatch.join('\n');
-      }
-      
-      return files;
-    }
+    // Parse patches
+    const patches = parsePatchFiles(DATA.patch || '', 'quickdiff');
+    const diffByPath = new Map(patches.flatMap(p => p.files).map(f => [f.name, f]));
 
-    const patches = parsePatch(data.patch);
+    const main = document.getElementById('main');
+    main.innerHTML = '';
 
-    // Render file list
-    const fileList = document.getElementById('file-list');
-    const mainContent = document.getElementById('main-content');
-
-    function renderDiff(path, patch) {
-      if (!patch) {
-        mainContent.innerHTML = '<div class="empty-state">No diff available</div>';
-        return;
-      }
-
-      const lines = patch.split('\n');
-      const diffLines = lines.map(line => {
-        let cls = '';
-        if (line.startsWith('+') && !line.startsWith('+++')) cls = 'add';
-        else if (line.startsWith('-') && !line.startsWith('---')) cls = 'del';
-        else if (line.startsWith('@@')) cls = 'hunk';
-        
-        // Escape HTML
-        const escaped = line
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
-        
-        return `<span class="diff-line ${cls}">${escaped}</span>`;
-      }).join('\n');
-
-      mainContent.innerHTML = `
-        <div class="diff-container">
-          <div class="diff-header">${path}</div>
-          <div class="diff-content"><pre>${diffLines}</pre></div>
-        </div>
-      `;
-    }
-
-    function selectFile(path, element) {
-      // Update active state
-      document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
-      element.classList.add('active');
-      
-      // Render diff
-      renderDiff(path, patches[path]);
-    }
-
-    if (data.files?.length) {
-      data.files.forEach((file, idx) => {
-        const li = document.createElement('li');
-        li.className = 'file-item';
-        li.innerHTML = `
-          <span class="file-name" title="${file.path}">${file.path}</span>
-          <span class="file-stats">
-            <span class="add">+${file.additions}</span>
-            <span class="del">-${file.deletions}</span>
-          </span>
-        `;
-        li.addEventListener('click', () => selectFile(file.path, li));
-        fileList.appendChild(li);
-        
-        // Select first file
-        if (idx === 0) {
-          li.classList.add('active');
-          renderDiff(file.path, patches[file.path]);
-        }
-      });
+    if (!DATA.files?.length) {
+      main.innerHTML = '<div class="empty">No files changed</div>';
     } else {
-      fileList.innerHTML = '<li class="file-item">No files changed</li>';
+      DATA.files.forEach((file, idx) => {
+        const section = document.createElement('div');
+        section.className = 'file-section';
+        section.dataset.index = idx;
+        section.innerHTML = `
+          <div class="file-header">
+            <span class="toggle">▼</span>
+            <span class="path">${escapeHtml(file.path)}</span>
+            <span class="changes">
+              <span class="add">+${file.additions || 0}</span>
+              <span class="del">-${file.deletions || 0}</span>
+            </span>
+          </div>
+          <div class="diff-container"></div>
+        `;
+        main.appendChild(section);
+
+        // Toggle collapse
+        const header = section.querySelector('.file-header');
+        const toggle = section.querySelector('.toggle');
+        header.addEventListener('click', () => {
+          section.classList.toggle('collapsed');
+          toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
+        });
+
+        const diffContainer = section.querySelector('.diff-container');
+        const fileDiff = diffByPath.get(file.path);
+
+        if (!fileDiff) {
+          diffContainer.innerHTML = '<div class="empty">No diff available</div>';
+          return;
+        }
+
+        // Render with @pierre/diffs
+        new FileDiff({
+          theme: 'pierre-dark',
+          diffStyle: 'split',
+          diffIndicators: 'bars',
+          lineDiffType: 'word-alt',
+          disableBackground: true,
+          overflow: 'scroll',
+          unsafeCSS: `
+            pre, code, span, [data-line] {
+              font-family: 'Berkeley Mono', 'SF Mono', 'Menlo', monospace !important;
+              font-size: 13px !important;
+              line-height: 20px !important;
+              font-feature-settings: "liga" 0, "calt" 0 !important;
+              font-variant-ligatures: none !important;
+            }
+          `,
+        }).render({ fileDiff, containerWrapper: diffContainer, lineAnnotations: [] });
+      });
     }
+
+    // Keyboard navigation
+    let idx = 0;
+    const sections = [...document.querySelectorAll('.file-section')];
+
+    document.addEventListener('keydown', e => {
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      
+      if (e.key === 'j') {
+        idx = Math.min(idx + 1, sections.length - 1);
+        sections[idx]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      if (e.key === 'k') {
+        idx = Math.max(idx - 1, 0);
+        sections[idx]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      if (e.key === 'r') {
+        const sec = sections[idx];
+        if (sec) {
+          sec.classList.toggle('collapsed');
+          sec.querySelector('.toggle').textContent = sec.classList.contains('collapsed') ? '▶' : '▼';
+        }
+      }
+    });
   </script>
 </body>
 </html>
