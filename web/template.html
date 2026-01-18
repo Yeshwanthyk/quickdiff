@@ -214,13 +214,11 @@
   <script type="module">
     import { FileDiff, parsePatchFiles } from 'https://esm.sh/@pierre/diffs@1.0.6';
 
-    const dataEl = document.getElementById('review-data');
+    // Decode base64 JSON data
+    const b64 = '{{REVIEW_DATA_B64}}';
     let DATA;
-    
-    // Support both inline JSON and base64 encoded
-    const rawJson = `{{REVIEW_DATA_JSON}}`;
     try {
-      DATA = JSON.parse(rawJson);
+      DATA = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0))));
     } catch {
       DATA = { files: [], patch: '', branch: '', commit: '', summary: '' };
     }

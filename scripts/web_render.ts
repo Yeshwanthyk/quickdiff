@@ -21,11 +21,11 @@ const template = readFileSync(templatePath, "utf8");
 const jsonText = readFileSync(jsonPath, "utf8");
 const data = JSON.parse(jsonText);
 
-// Escape JSON for embedding in script tag (prevent </script> injection)
-const safeJson = jsonText.replaceAll("</script>", "<\\/script>");
+// Base64 encode the JSON to avoid escaping issues
+const b64 = Buffer.from(jsonText).toString("base64");
 
 const html = template
-  .replaceAll("{{REVIEW_DATA_JSON}}", safeJson)
+  .replaceAll("{{REVIEW_DATA_B64}}", b64)
   .replaceAll("{{BRANCH}}", String(data.branch || ""))
   .replaceAll("{{COMMIT}}", String(data.commit || ""));
 
