@@ -78,14 +78,42 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// Find a subcommand in args, skipping flags and their values.
+/// Returns (index, subcommand) if found.
+fn find_subcommand(args: &[String]) -> Option<(usize, &str)> {
+    const SUBCOMMANDS: &[&str] = &["comments", "web"];
+    const FLAGS_WITH_VALUES: &[&str] = &["-c", "--commit", "-b", "--base", "-f", "--file", "-t", "--theme", "--pr"];
+    
+    let mut i = 1; // skip program name
+    while i < args.len() {
+        let arg = &args[i];
+        if arg.starts_with('-') {
+            // Check if this flag takes a value
+            if FLAGS_WITH_VALUES.contains(&arg.as_str()) {
+                i += 2; // skip flag and its value
+            } else {
+                i += 1; // skip flag only
+            }
+        } else if SUBCOMMANDS.contains(&arg.as_str()) {
+            return Some((i, arg.as_str()));
+        } else {
+            // Positional arg that isn't a subcommand - stop looking
+            return None;
+        }
+    }
+    None
+}
+
 fn main() -> ExitCode {
     // Check for subcommands first (before clap parsing)
+    // Scan past any flags to find subcommand position
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(|s| s.as_str()) == Some("comments") {
-        return run_cli_comments(&args[2..]);
-    }
-    if args.get(1).map(|s| s.as_str()) == Some("web") {
-        return run_cli_web(&args[2..]);
+    if let Some((idx, cmd)) = find_subcommand(&args) {
+        match cmd {
+            "comments" => return run_cli_comments(&args[idx + 1..]),
+            "web" => return run_cli_web(&args[idx + 1..]),
+            _ => {}
+        }
     }
 
     // Parse CLI args
