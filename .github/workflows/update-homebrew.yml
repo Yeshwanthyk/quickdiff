@@ -1,0 +1,71 @@
+name: Update Homebrew Formula
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  update-homebrew:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout homebrew-tools
+        uses: actions/checkout@v4
+        with:
+          repository: Yeshwanthyk/homebrew-tools
+          token: ${{ secrets.HOMEBREW_TOOLS_TOKEN }}
+          path: homebrew-tools
+
+      - name: Calculate SHA256 checksums
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION=${RELEASE_TAG#v}
+          
+          ARM64_SHA=$(curl -sL "https://github.com/Yeshwanthyk/quickdiff/releases/download/${RELEASE_TAG}/quickdiff-aarch64-apple-darwin.tar.gz" | shasum -a 256 | awk '{print $1}')
+          LINUX_SHA=$(curl -sL "https://github.com/Yeshwanthyk/quickdiff/releases/download/${RELEASE_TAG}/quickdiff-x86_64-unknown-linux-gnu.tar.gz" | shasum -a 256 | awk '{print $1}')
+          
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "ARM64_SHA=${ARM64_SHA}" >> $GITHUB_ENV
+          echo "LINUX_SHA=${LINUX_SHA}" >> $GITHUB_ENV
+
+      - name: Update formula
+        run: |
+          cat > homebrew-tools/Formula/quickdiff.rb << 'EOF'
+          class Quickdiff < Formula
+            desc "Fast, keyboard-driven terminal diff viewer for git and jj repositories"
+            homepage "https://github.com/Yeshwanthyk/quickdiff"
+            license "MIT"
+
+            on_macos do
+              url "https://github.com/Yeshwanthyk/quickdiff/releases/download/v#{version}/quickdiff-aarch64-apple-darwin.tar.gz"
+              sha256 "${{ env.ARM64_SHA }}"
+            end
+
+            on_linux do
+              url "https://github.com/Yeshwanthyk/quickdiff/releases/download/v#{version}/quickdiff-x86_64-unknown-linux-gnu.tar.gz"
+              sha256 "${{ env.LINUX_SHA }}"
+            end
+
+            version "${{ env.VERSION }}"
+
+            def install
+              bin.install "quickdiff"
+            end
+
+            test do
+              system "#{bin}/quickdiff", "--version"
+            end
+          end
+          EOF
+
+      - name: Commit and push
+        run: |
+          cd homebrew-tools
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add Formula/quickdiff.rb
+          git commit -m "Update quickdiff to ${{ env.VERSION }}"
+          git push
