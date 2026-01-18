@@ -156,3 +156,14 @@ pub struct PrState {
     /// Action type.
     pub action_type: Option<PRActionType>,
 }
+
+/// Patch mode state (stdin or external patch input).
+#[derive(Debug, Default)]
+pub struct PatchState {
+    /// Whether patch mode is active.
+    pub active: bool,
+    /// Patch-derived files.
+    pub files: Vec<PRChangedFile>,
+    /// Display label (e.g., "stdin").
+    pub label: String,
+}

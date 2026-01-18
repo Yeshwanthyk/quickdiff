@@ -58,6 +58,9 @@ tokio = { version = "1", features = ["io-util"], optional = true }
 notify = "6"
 notify-debouncer-mini = "0.4"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 default = ["lang-rust", "lang-typescript", "lang-go", "lang-python", "lang-json", "lang-yaml", "lang-bash", "jj"]
 jj = ["dep:jj-lib", "dep:chrono", "dep:pollster", "dep:futures", "dep:tokio"]

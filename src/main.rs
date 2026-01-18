@@ -46,6 +46,10 @@ struct Cli {
     #[arg(long = "pr", value_name = "NUMBER")]
     pr: Option<Option<u32>>,
 
+    /// Read unified diff from stdin and render in TUI (pager mode)
+    #[arg(long = "stdin")]
+    stdin: bool,
+
     /// Comments subcommand
     #[arg(trailing_var_arg = true, hide = true)]
     rest: Vec<String>,
@@ -86,6 +90,10 @@ fn main() -> ExitCode {
 
     // Initialize metrics if enabled
     quickdiff::metrics::init();
+
+    if cli.stdin {
+        return run_tui_patch(cli.theme);
+    }
 
     // Determine diff source
     let source = parse_diff_source(&cli);
@@ -169,6 +177,115 @@ fn run_cli_comments(args: &[String]) -> ExitCode {
     run_comments_command(&repo, args)
 }
 
+/// Run TUI in patch mode (stdin input).
+fn run_tui_patch(theme: Option<String>) -> ExitCode {
+    use std::io::Read;
+
+    // Read patch from stdin
+    let mut patch = String::new();
+    if let Err(e) = io::stdin().read_to_string(&mut patch) {
+        eprintln!("Error reading stdin: {}", e);
+        return ExitCode::from(1);
+    }
+
+    if patch.trim().is_empty() {
+        eprintln!("Error: empty input from stdin");
+        return ExitCode::from(1);
+    }
+
+    // Discover repository (optional for patch mode, but needed for theme/state)
+    let cwd = match std::env::current_dir() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to get current directory: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let repo = match RepoRoot::discover(&cwd) {
+        Ok(repo) => repo,
+        Err(quickdiff::core::RepoError::NotARepo) => {
+            eprintln!("Error: Not inside a git or jj repository");
+            return ExitCode::from(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // Create app in patch mode
+    let mut app = match App::new(repo, DiffSource::WorkingTree, None, theme.as_deref()) {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // Load patch
+    app.load_patch(patch, "stdin".to_string());
+
+    if app.files.is_empty() {
+        eprintln!("Error: patch contains no files");
+        return ExitCode::from(1);
+    }
+
+    // Run TUI (reopen /dev/tty if stdin was piped)
+    match run_tui_loop_tty(&mut app) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Run TUI loop, reopening /dev/tty for input when stdin is piped.
+#[cfg(unix)]
+fn run_tui_loop_tty(app: &mut App) -> Result<()> {
+    use std::fs::File;
+    use std::os::unix::io::AsRawFd;
+
+    // Check if stdin is a TTY
+    if crossterm::tty::IsTty::is_tty(&io::stdin()) {
+        return run_tui_loop(app);
+    }
+
+    // stdin is piped, reopen /dev/tty for terminal input
+    let tty = File::open("/dev/tty")
+        .context("Failed to open /dev/tty - stdin mode requires a terminal")?;
+    let tty_fd = tty.as_raw_fd();
+
+    // Duplicate stdin to restore later
+    let orig_stdin = unsafe { libc::dup(0) };
+    if orig_stdin < 0 {
+        return Err(anyhow::anyhow!("Failed to dup stdin"));
+    }
+
+    // Redirect stdin to /dev/tty
+    if unsafe { libc::dup2(tty_fd, 0) } < 0 {
+        unsafe { libc::close(orig_stdin) };
+        return Err(anyhow::anyhow!("Failed to redirect stdin to /dev/tty"));
+    }
+
+    let result = run_tui_loop(app);
+
+    // Restore original stdin
+    unsafe {
+        libc::dup2(orig_stdin, 0);
+        libc::close(orig_stdin);
+    }
+
+    result
+}
+
+#[cfg(not(unix))]
+fn run_tui_loop_tty(app: &mut App) -> Result<()> {
+    // On non-Unix, just try regular TUI loop
+    run_tui_loop(app)
+}
+
 /// Run the TUI application.
 fn run_tui(
     source: DiffSource,
@@ -247,13 +364,18 @@ fn run_tui(
         return Ok(());
     }
 
+    run_tui_loop(&mut app)
+}
+
+/// Run the TUI loop with terminal setup and cleanup.
+fn run_tui_loop(app: &mut App) -> Result<()> {
     // Setup terminal with RAII guard
     let _guard = TerminalGuard::new()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     // Main loop
-    let result = run_loop(&mut terminal, &mut app);
+    let result = run_event_loop(&mut terminal, app);
 
     // Save state (guard will cleanup terminal on drop)
     if let Err(e) = app.save_state() {
@@ -263,7 +385,7 @@ fn run_tui(
     result
 }
 
-fn run_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
+fn run_event_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
     loop {
         app.poll_worker();
         app.poll_pr_worker();

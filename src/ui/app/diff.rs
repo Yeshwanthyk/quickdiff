@@ -13,6 +13,10 @@ impl App {
     ///
     /// Work is performed on a background thread. Call `poll_worker()` to apply results.
     pub fn request_current_diff(&mut self) {
+        if self.patch.active {
+            self.request_current_patch_diff();
+            return;
+        }
         if self.pr.active {
             self.request_current_pr_diff();
             return;

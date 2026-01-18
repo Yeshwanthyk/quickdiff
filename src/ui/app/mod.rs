@@ -18,6 +18,7 @@ mod diff;
 mod external;
 mod filter;
 mod navigation;
+mod patch;
 mod pr;
 mod state;
 mod theme;
@@ -25,8 +26,8 @@ mod watcher;
 mod worker_state;
 
 pub use state::{
-    CommentViewItem, CommentsState, DiffPaneMode, DiffViewMode, Focus, Mode, PRActionType, PrState,
-    SidebarState, UiState, ViewerState,
+    CommentViewItem, CommentsState, DiffPaneMode, DiffViewMode, Focus, Mode, PRActionType,
+    PatchState, PrState, SidebarState, UiState, ViewerState,
 };
 use worker_state::WorkerState;
 
@@ -113,6 +114,8 @@ pub struct App {
 
     /// PR mode state.
     pub pr: PrState,
+    /// Patch mode state.
+    pub patch: PatchState,
 }
 
 fn comment_context_for_source(source: &DiffSource) -> CommentContext {
@@ -241,6 +244,7 @@ impl App {
             theme_selector_idx: 0,
             theme_original: theme_name.unwrap_or("default").to_string(),
             pr: PrState::default(),
+            patch: PatchState::default(),
         };
 
         // Build path cache for sidebar
@@ -276,6 +280,9 @@ impl App {
 
     /// Get display string for current diff source.
     pub fn source_display(&self) -> String {
+        if self.patch.active {
+            return format!("Patch ({})", self.patch.label);
+        }
         diff_source_display(&self.source, &self.repo)
     }
 
@@ -353,7 +360,7 @@ impl App {
     /// Check if we're in working tree mode (uncommitted changes).
     /// Comments are only available in this mode.
     pub fn is_worktree_mode(&self) -> bool {
-        matches!(self.source, DiffSource::WorkingTree)
+        matches!(self.source, DiffSource::WorkingTree) && !self.patch.active
     }
 
     /// Mark dirty for redraw.
