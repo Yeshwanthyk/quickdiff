@@ -3,6 +3,11 @@ name = "quickdiff"
 version = "0.7.5"
 edition = "2021"
 rust-version = "1.75"
+license = "MIT"
+description = "A fast, keyboard-driven terminal diff viewer for git and jj"
+repository = "https://github.com/Yeshwanthyk/quickdiff"
+keywords = ["git", "diff", "tui", "jujutsu", "terminal"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 # CLI
