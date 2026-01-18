@@ -6,7 +6,13 @@ A fast, keyboard-driven terminal diff viewer for git and jj repositories.
 
 ## Install
 
-**macOS / Linux:**
+**Homebrew:**
+```bash
+brew tap Yeshwanthyk/tools
+brew install quickdiff
+```
+
+**macOS / Linux script:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Yeshwanthyk/quickdiff/main/install.sh | sh
 ```
