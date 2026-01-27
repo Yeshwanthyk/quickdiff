@@ -63,9 +63,9 @@ pub const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RepoError {
-    /// Path is not inside a git or jj repository.
-    #[error("not inside a git or jj repository")]
-    NotARepo,
+    /// Path is not inside a repository of the expected type.
+    #[error("not inside a {0} repository")]
+    NotARepo(&'static str),
     /// Git command failed with an error message.
     #[error("git command failed: {0}")]
     GitError(String),
@@ -150,6 +150,18 @@ pub enum VcsType {
     Jj,
 }
 
+/// VCS preference for repository discovery.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VcsPreference {
+    /// Auto-detect (prefers JJ when colocated).
+    #[default]
+    Auto,
+    /// Force Git backend only.
+    Git,
+    /// Force JJ backend only.
+    Jj,
+}
+
 #[cfg(feature = "jj")]
 fn find_jj_root(start: &Path) -> Option<PathBuf> {
     let mut current = if start.is_file() {
@@ -186,33 +198,51 @@ impl RepoRoot {
     /// Discover the git/jj repository containing the given path.
     ///
     /// Walks up the directory tree to find a `.jj` or `.git` directory.
-    /// Prefers `.jj` when both are present (colocated repo).
+    /// With `VcsPreference::Auto`, prefers `.jj` when both are present (colocated repo).
     ///
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use quickdiff::core::RepoRoot;
+    /// use quickdiff::core::{RepoRoot, VcsPreference};
     /// use std::path::Path;
     ///
-    /// let repo = RepoRoot::discover(Path::new(".")).expect("not in a repo");
+    /// let repo = RepoRoot::discover(Path::new("."), VcsPreference::Auto).expect("not in a repo");
     /// println!("Repo at: {}", repo.path().display());
     /// ```
     #[must_use = "this returns a Result that should be checked"]
-    pub fn discover(path: &Path) -> Result<Self, RepoError> {
-        if let Some(root) = find_jj_root(path) {
-            let root = root.canonicalize().map_err(|_| RepoError::NotARepo)?;
-            return Ok(Self {
-                root,
-                vcs: VcsType::Jj,
-            });
+    pub fn discover(path: &Path, preference: VcsPreference) -> Result<Self, RepoError> {
+        match preference {
+            VcsPreference::Auto => {
+                // Try JJ first, fall back to Git
+                if let Some(root) = find_jj_root(path) {
+                    let root = root.canonicalize().map_err(|_| RepoError::NotARepo("jj"))?;
+                    return Ok(Self {
+                        root,
+                        vcs: VcsType::Jj,
+                    });
+                }
+                Self::discover_git(path)
+            }
+            VcsPreference::Git => Self::discover_git(path),
+            VcsPreference::Jj => {
+                let root = find_jj_root(path).ok_or(RepoError::NotARepo("jj"))?;
+                let root = root.canonicalize().map_err(|_| RepoError::NotARepo("jj"))?;
+                Ok(Self {
+                    root,
+                    vcs: VcsType::Jj,
+                })
+            }
         }
+    }
 
-        let repo = Repository::discover(path).map_err(|_| RepoError::NotARepo)?;
+    /// Discover a Git repository (helper for discover).
+    fn discover_git(path: &Path) -> Result<Self, RepoError> {
+        let repo = Repository::discover(path).map_err(|_| RepoError::NotARepo("git"))?;
         let root = repo
             .workdir()
-            .ok_or(RepoError::NotARepo)?
+            .ok_or(RepoError::NotARepo("git"))?
             .canonicalize()
-            .map_err(|_| RepoError::NotARepo)?;
+            .map_err(|_| RepoError::NotARepo("git"))?;
         Ok(Self {
             root,
             vcs: VcsType::Git,
@@ -286,19 +316,22 @@ impl std::fmt::Debug for GitRepo {
 impl GitRepo {
     /// Open a git repository at the exact path.
     pub fn open(path: &Path) -> Result<Self, RepoError> {
-        let repo = Repository::open(path).map_err(|_| RepoError::NotARepo)?;
-        let root = repo.workdir().ok_or(RepoError::NotARepo)?.to_path_buf();
+        let repo = Repository::open(path).map_err(|_| RepoError::NotARepo("git"))?;
+        let root = repo
+            .workdir()
+            .ok_or(RepoError::NotARepo("git"))?
+            .to_path_buf();
         Ok(Self { inner: repo, root })
     }
 
     /// Discover the git repository containing the given path.
     pub fn discover(path: &Path) -> Result<Self, RepoError> {
-        let repo = Repository::discover(path).map_err(|_| RepoError::NotARepo)?;
+        let repo = Repository::discover(path).map_err(|_| RepoError::NotARepo("git"))?;
         let root = repo
             .workdir()
-            .ok_or(RepoError::NotARepo)?
+            .ok_or(RepoError::NotARepo("git"))?
             .canonicalize()
-            .map_err(|_| RepoError::NotARepo)?;
+            .map_err(|_| RepoError::NotARepo("git"))?;
         Ok(Self { inner: repo, root })
     }
 
@@ -837,7 +870,7 @@ pub fn list_changed_files(root: &RepoRoot) -> Result<Vec<ChangedFile>, RepoError
         }
     }
 
-    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo("git"))?;
 
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
@@ -970,7 +1003,7 @@ fn get_blob_size(
     revision: &str,
     path: &RelPath,
 ) -> Result<Option<u64>, RepoError> {
-    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo("git"))?;
 
     let result = lookup_blob(&repo, revision, path)?;
     Ok(result.map(|blob| blob.size() as u64))
@@ -984,7 +1017,7 @@ pub fn load_head_content(root: &RepoRoot, path: &RelPath) -> Result<Vec<u8>, Rep
         return load_revision_content(root, root.working_copy_parent_ref(), path);
     }
 
-    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo("git"))?;
 
     let blob = match lookup_blob(&repo, "HEAD", path)? {
         Some(b) => b,
@@ -1055,7 +1088,7 @@ pub fn load_revision_content(
 
     validate_git_ref_format(revision)?;
 
-    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo("git"))?;
 
     let blob = match lookup_blob(&repo, revision, path)? {
         Some(b) => b,
@@ -1091,7 +1124,7 @@ pub fn resolve_merge_base(root: &RepoRoot, base: &str) -> Result<String, RepoErr
 
     validate_git_ref_format(base)?;
 
-    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo("git"))?;
 
     // Resolve base ref
     let base_obj = repo
@@ -1223,7 +1256,7 @@ pub fn resolve_revision(root: &RepoRoot, revision: &str) -> Result<String, RepoE
 
     validate_git_ref_format(revision)?;
 
-    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo("git"))?;
     let obj = repo
         .revparse_single(revision)
         .map_err(|_| RepoError::InvalidRevision(revision.to_string()))?;
@@ -1256,7 +1289,7 @@ pub fn get_parent_revision(root: &RepoRoot, revision: &str) -> Result<String, Re
 
     validate_git_ref_format(revision)?;
 
-    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo("git"))?;
     let obj = repo
         .revparse_single(revision)
         .map_err(|_| RepoError::InvalidRevision(revision.to_string()))?;
@@ -1296,7 +1329,7 @@ pub fn list_changed_files_between(
     validate_git_ref_format(from)?;
     validate_git_ref_format(to)?;
 
-    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo)?;
+    let repo = Repository::open(root.path()).map_err(|_| RepoError::NotARepo("git"))?;
 
     // Resolve commits
     let from_obj = repo
@@ -1715,7 +1748,8 @@ mod tests {
             return;
         };
 
-        let root = RepoRoot::discover(repo.path()).expect("should discover jj repo");
+        let root =
+            RepoRoot::discover(repo.path(), VcsPreference::Auto).expect("should discover jj repo");
         assert!(root.is_jj());
     }
 
@@ -1727,7 +1761,8 @@ mod tests {
             return;
         };
 
-        let root = RepoRoot::discover(repo.path()).expect("should discover jj repo");
+        let root =
+            RepoRoot::discover(repo.path(), VcsPreference::Auto).expect("should discover jj repo");
         let files = list_changed_files(&root).expect("list_changed_files should succeed");
 
         assert!(files.iter().any(|f| f.path.as_str() == "README.md"));
@@ -1741,7 +1776,8 @@ mod tests {
             return;
         };
 
-        let root = RepoRoot::discover(repo.path()).expect("should discover jj repo");
+        let root =
+            RepoRoot::discover(repo.path(), VcsPreference::Auto).expect("should discover jj repo");
         let content = load_revision_content(&root, "@", &RelPath::new("README.md"))
             .expect("load_revision_content should succeed");
 
@@ -1756,7 +1792,8 @@ mod tests {
             return;
         };
 
-        let root = RepoRoot::discover(repo.path()).expect("should discover jj repo");
+        let root =
+            RepoRoot::discover(repo.path(), VcsPreference::Auto).expect("should discover jj repo");
         let revision = resolve_revision(&root, "@").expect("resolve_revision should succeed");
 
         assert!(!revision.is_empty());

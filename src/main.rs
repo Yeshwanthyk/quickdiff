@@ -15,7 +15,7 @@ use crossterm::{
 use ratatui::prelude::*;
 
 use quickdiff::cli::run_comments_command;
-use quickdiff::core::{DiffSource, RepoRoot};
+use quickdiff::core::{DiffSource, RepoRoot, VcsPreference};
 use quickdiff::ui::{handle_input, render, App};
 
 /// A git/jj-first terminal diff viewer.
@@ -50,9 +50,22 @@ struct Cli {
     #[arg(long = "stdin")]
     stdin: bool,
 
+    /// Force VCS backend (default: auto-detect, prefers jj)
+    #[arg(long = "vcs", value_name = "TYPE", value_parser = parse_vcs_preference)]
+    vcs: Option<VcsPreference>,
+
     /// Comments subcommand
     #[arg(trailing_var_arg = true, hide = true)]
     rest: Vec<String>,
+}
+
+fn parse_vcs_preference(s: &str) -> Result<VcsPreference, String> {
+    match s.to_lowercase().as_str() {
+        "git" => Ok(VcsPreference::Git),
+        "jj" => Ok(VcsPreference::Jj),
+        "auto" => Ok(VcsPreference::Auto),
+        _ => Err(format!("invalid VCS type '{}', expected: git, jj, auto", s)),
+    }
 }
 
 /// RAII guard for terminal state. Restores terminal on drop (including panic).
@@ -195,10 +208,10 @@ fn run_cli_comments(args: &[String]) -> ExitCode {
         }
     };
 
-    let repo = match RepoRoot::discover(&cwd) {
+    let repo = match RepoRoot::discover(&cwd, VcsPreference::Auto) {
         Ok(repo) => repo,
-        Err(quickdiff::core::RepoError::NotARepo) => {
-            eprintln!("Error: Not inside a git or jj repository");
+        Err(quickdiff::core::RepoError::NotARepo(vcs)) => {
+            eprintln!("Error: Not inside a {} repository", vcs);
             return ExitCode::from(1);
         }
         Err(e) => {
@@ -274,10 +287,10 @@ fn run_cli_web(args: &[String]) -> ExitCode {
         }
     };
 
-    let repo = match RepoRoot::discover(&cwd) {
+    let repo = match RepoRoot::discover(&cwd, VcsPreference::Auto) {
         Ok(repo) => repo,
-        Err(quickdiff::core::RepoError::NotARepo) => {
-            eprintln!("Error: Not inside a git or jj repository");
+        Err(quickdiff::core::RepoError::NotARepo(vcs)) => {
+            eprintln!("Error: Not inside a {} repository", vcs);
             return ExitCode::from(1);
         }
         Err(e) => {
@@ -393,10 +406,10 @@ fn run_tui_patch(theme: Option<String>) -> ExitCode {
         }
     };
 
-    let repo = match RepoRoot::discover(&cwd) {
+    let repo = match RepoRoot::discover(&cwd, VcsPreference::Auto) {
         Ok(repo) => repo,
-        Err(quickdiff::core::RepoError::NotARepo) => {
-            eprintln!("Error: Not inside a git or jj repository");
+        Err(quickdiff::core::RepoError::NotARepo(vcs)) => {
+            eprintln!("Error: Not inside a {} repository", vcs);
             return ExitCode::from(1);
         }
         Err(e) => {
@@ -498,10 +511,10 @@ fn run_tui(
 
     // Discover repository
     let cwd = std::env::current_dir().context("Failed to get current directory")?;
-    let repo = match RepoRoot::discover(&cwd) {
+    let repo = match RepoRoot::discover(&cwd, VcsPreference::Auto) {
         Ok(repo) => repo,
-        Err(quickdiff::core::RepoError::NotARepo) => {
-            eprintln!("Error: Not inside a git or jj repository");
+        Err(quickdiff::core::RepoError::NotARepo(vcs)) => {
+            eprintln!("Error: Not inside a {} repository", vcs);
             std::process::exit(1);
         }
         Err(e) => {

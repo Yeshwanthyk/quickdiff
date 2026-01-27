@@ -428,7 +428,7 @@ mod tests {
         diff::{build_view_rows, map_diff_row_to_view_row},
         *,
     };
-    use crate::core::{DiffResult, TextBuffer};
+    use crate::core::{DiffResult, TextBuffer, VcsPreference};
 
     #[test]
     fn test_extract_content_from_patch_simple() {
@@ -540,7 +540,7 @@ rename to new.rs
 
     #[test]
     fn worker_state_initializes_defaults() {
-        let repo = RepoRoot::discover(std::path::Path::new(".")).unwrap();
+        let repo = RepoRoot::discover(std::path::Path::new("."), VcsPreference::Auto).unwrap();
         let worker = WorkerState::new(&repo);
 
         assert_eq!(worker.next_request_id, 1);

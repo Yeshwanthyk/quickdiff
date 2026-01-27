@@ -8,7 +8,7 @@
 //! ```rust,ignore
 //! use quickdiff::prelude::*;
 //!
-//! let repo = RepoRoot::discover(std::path::Path::new("."))?;
+//! let repo = RepoRoot::discover(std::path::Path::new("."), VcsPreference::Auto)?;
 //! let files = quickdiff::core::list_changed_files(&repo)?;
 //! ```
 

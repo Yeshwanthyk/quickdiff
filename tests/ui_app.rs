@@ -1,5 +1,5 @@
 use git2::{IndexAddOption, Repository, Signature};
-use quickdiff::core::{DiffSource, RepoRoot};
+use quickdiff::core::{DiffSource, RepoRoot, VcsPreference};
 use quickdiff::ui::{App, DiffPaneMode, Focus, Mode};
 use std::fs;
 use std::path::Path;
@@ -76,7 +76,7 @@ impl RepoHarness {
         let env = TestEnv::new();
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        let repo = RepoRoot::discover(dir.path()).unwrap();
+        let repo = RepoRoot::discover(dir.path(), VcsPreference::Auto).unwrap();
         Self {
             _env: env,
             _dir: dir,

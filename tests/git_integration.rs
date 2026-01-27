@@ -53,14 +53,18 @@ fn create_test_repo() -> TempDir {
 #[test]
 fn test_repo_discovery() {
     let dir = create_test_repo();
-    let repo = quickdiff::core::RepoRoot::discover(dir.path()).unwrap();
+    let repo =
+        quickdiff::core::RepoRoot::discover(dir.path(), quickdiff::core::VcsPreference::Auto)
+            .unwrap();
     assert!(repo.path().exists());
 }
 
 #[test]
 fn test_list_changed_files_empty() {
     let dir = create_test_repo();
-    let repo = quickdiff::core::RepoRoot::discover(dir.path()).unwrap();
+    let repo =
+        quickdiff::core::RepoRoot::discover(dir.path(), quickdiff::core::VcsPreference::Auto)
+            .unwrap();
     let files = quickdiff::core::list_changed_files(&repo).unwrap();
     assert!(files.is_empty(), "Clean repo should have no changes");
 }
@@ -73,7 +77,8 @@ fn test_list_changed_files_modified() {
     // Modify file
     std::fs::write(path.join("file.txt"), "modified content\n").unwrap();
 
-    let repo = quickdiff::core::RepoRoot::discover(path).unwrap();
+    let repo =
+        quickdiff::core::RepoRoot::discover(path, quickdiff::core::VcsPreference::Auto).unwrap();
     let files = quickdiff::core::list_changed_files(&repo).unwrap();
 
     assert_eq!(files.len(), 1);
@@ -89,7 +94,8 @@ fn test_list_changed_files_untracked() {
     // Add new untracked file
     std::fs::write(path.join("new.txt"), "new file\n").unwrap();
 
-    let repo = quickdiff::core::RepoRoot::discover(path).unwrap();
+    let repo =
+        quickdiff::core::RepoRoot::discover(path, quickdiff::core::VcsPreference::Auto).unwrap();
     let files = quickdiff::core::list_changed_files(&repo).unwrap();
 
     assert_eq!(files.len(), 1);
