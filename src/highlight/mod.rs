@@ -180,6 +180,7 @@ const TS_SCOPE_QUERY: &str = r#"
 /// Query scopes from source code for a given language.
 /// Returns scopes sorted by start_line, with nested scopes following their parents.
 pub fn query_scopes(lang: LanguageId, source: &str) -> Vec<ScopeInfo> {
+    let _timer = crate::metrics::Timer::start("highlight_query_scopes");
     match lang {
         #[cfg(feature = "lang-rust")]
         LanguageId::Rust => query_scopes_with_lang(
@@ -580,6 +581,7 @@ fn build_line_spans(
     lang: LanguageId,
     source: &str,
 ) -> Vec<Vec<StyledSpan>> {
+    let _timer = crate::metrics::Timer::start("highlight_compute");
     let bounds = compute_line_bounds(source);
     if bounds.is_empty() {
         return Vec::new();

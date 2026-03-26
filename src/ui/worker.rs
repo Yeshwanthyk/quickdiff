@@ -113,6 +113,7 @@ fn drain_latest_request(
 }
 
 fn compute_diff_payload(repo: &RepoRoot, req: DiffLoadRequest) -> DiffLoadResponse {
+    let _timer = crate::metrics::Timer::start("diff_worker_load");
     let DiffLoadRequest {
         id,
         source,

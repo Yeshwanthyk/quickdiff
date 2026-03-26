@@ -15,7 +15,10 @@ use crossterm::{
 use ratatui::prelude::*;
 
 use quickdiff::cli::run_comments_command;
-use quickdiff::core::{DiffSource, RepoRoot, VcsPreference};
+use quickdiff::core::{
+    load_preferences, looks_like_unified_diff, read_stdin_text, ConfigOverrides, DiffSource,
+    RepoRoot, VcsPreference,
+};
 use quickdiff::ui::{handle_input, render, App};
 
 /// A git/jj-first terminal diff viewer.
@@ -94,9 +97,9 @@ impl Drop for TerminalGuard {
 /// Find a subcommand in args, skipping flags and their values.
 /// Returns (index, subcommand) if found.
 fn find_subcommand(args: &[String]) -> Option<(usize, &str)> {
-    const SUBCOMMANDS: &[&str] = &["comments", "web"];
+    const SUBCOMMANDS: &[&str] = &["comments", "web", "pager", "difftool"];
     const FLAGS_WITH_VALUES: &[&str] = &[
-        "-c", "--commit", "-b", "--base", "-f", "--file", "-t", "--theme", "--pr",
+        "-c", "--commit", "-b", "--base", "-f", "--file", "-t", "--theme", "--pr", "--vcs",
     ];
 
     let mut i = 1; // skip program name
@@ -127,6 +130,8 @@ fn main() -> ExitCode {
         match cmd {
             "comments" => return run_cli_comments(&args[idx + 1..]),
             "web" => return run_cli_web(&args[idx + 1..]),
+            "pager" => return run_cli_pager(&args[idx + 1..]),
+            "difftool" => return run_cli_difftool(&args[idx + 1..]),
             _ => {}
         }
     }
@@ -138,7 +143,7 @@ fn main() -> ExitCode {
     quickdiff::metrics::init();
 
     if cli.stdin {
-        return run_tui_patch(cli.theme);
+        return run_tui_patch(cli.theme, cli.vcs.unwrap_or(VcsPreference::Auto));
     }
 
     // Determine diff source
@@ -152,7 +157,8 @@ fn main() -> ExitCode {
     };
 
     // Run TUI
-    match run_tui(source, cli.file, cli.theme, pr_number) {
+    let vcs = cli.vcs.unwrap_or(VcsPreference::Auto);
+    match run_tui(source, cli.file, cli.theme, pr_number, vcs) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -163,7 +169,7 @@ fn main() -> ExitCode {
 
 /// Parse CLI arguments into a DiffSource.
 fn parse_diff_source(cli: &Cli) -> DiffSource {
-    // Explicit flags take precedence
+    // Explicit flags take precedence.
     if let Some(ref commit) = cli.commit {
         return DiffSource::Commit(commit.clone());
     }
@@ -171,13 +177,20 @@ fn parse_diff_source(cli: &Cli) -> DiffSource {
         return DiffSource::Base(base.clone());
     }
 
-    // Check positional argument
+    if let Some(left) = cli.revision.as_ref().filter(|_| !cli.rest.is_empty()) {
+        let right = &cli.rest[0];
+        let display_path = cli.rest.get(1).cloned();
+        return DiffSource::FilePair {
+            left: left.into(),
+            right: right.into(),
+            display_path,
+        };
+    }
+
     if let Some(ref rev) = cli.revision {
-        // Check for range syntax (contains ..)
         if let Some(idx) = rev.find("..") {
             let from = &rev[..idx];
             let to = &rev[idx + 2..];
-            // Handle ... (three dots) as well
             let to = to.strip_prefix('.').unwrap_or(to);
             return DiffSource::Range {
                 from: from.to_string(),
@@ -185,17 +198,38 @@ fn parse_diff_source(cli: &Cli) -> DiffSource {
             };
         }
 
-        // Check if it looks like a remote branch
         if rev.contains('/') && !rev.contains(':') {
             return DiffSource::Base(rev.clone());
         }
 
-        // Default: treat as a commit
         return DiffSource::Commit(rev.clone());
     }
 
-    // Default: working tree changes
     DiffSource::WorkingTree
+}
+
+fn validate_file_input(path: &std::path::Path) -> Result<()> {
+    if !path.exists() {
+        anyhow::bail!("file not found: {}", path.display());
+    }
+    if !path.is_file() {
+        anyhow::bail!(
+            "unsupported input (expected regular file): {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_source_inputs(source: &DiffSource) -> Result<()> {
+    match source {
+        DiffSource::FilePair { left, right, .. } | DiffSource::DiffTool { left, right, .. } => {
+            validate_file_input(left)?;
+            validate_file_input(right)?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Run CLI comments command.
@@ -229,7 +263,6 @@ const WEB_TEMPLATE: &str = include_str!("../web/template.html");
 /// Run CLI web preview command.
 fn run_cli_web(args: &[String]) -> ExitCode {
     use base64::Engine;
-    use std::io::Read;
 
     // Parse web subcommand args
     let mut stdin_mode = false;
@@ -264,11 +297,13 @@ fn run_cli_web(args: &[String]) -> ExitCode {
 
     // Read stdin patch if requested
     let stdin_patch = if stdin_mode {
-        let mut patch = String::new();
-        if let Err(e) = io::stdin().read_to_string(&mut patch) {
-            eprintln!("Error reading stdin: {}", e);
-            return ExitCode::from(1);
-        }
+        let patch = match read_stdin_text() {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("Error reading stdin: {}", e);
+                return ExitCode::from(1);
+            }
+        };
         if patch.trim().is_empty() {
             eprintln!("Error: empty input from stdin");
             return ExitCode::from(1);
@@ -381,23 +416,78 @@ fn run_cli_web(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Run TUI in patch mode (stdin input).
-fn run_tui_patch(theme: Option<String>) -> ExitCode {
-    use std::io::Read;
-
-    // Read patch from stdin
-    let mut patch = String::new();
-    if let Err(e) = io::stdin().read_to_string(&mut patch) {
-        eprintln!("Error reading stdin: {}", e);
+fn run_cli_pager(args: &[String]) -> ExitCode {
+    if !args.is_empty() {
+        eprintln!("Error: pager does not accept positional arguments");
         return ExitCode::from(1);
     }
+
+    let input = match read_stdin_text() {
+        Ok(text) => text,
+        Err(err) => {
+            eprintln!("Error reading stdin: {}", err);
+            return ExitCode::from(1);
+        }
+    };
+
+    if input.trim().is_empty() {
+        eprintln!("Error: empty input from stdin");
+        return ExitCode::from(1);
+    }
+
+    if looks_like_unified_diff(&input) {
+        run_tui_patch_from_text(input, None, VcsPreference::Auto, "stdin")
+    } else {
+        print!("{}", input);
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_cli_difftool(args: &[String]) -> ExitCode {
+    if args.len() < 2 || args.len() > 3 {
+        eprintln!("Usage: quickdiff difftool <left> <right> [display-path]");
+        return ExitCode::from(1);
+    }
+
+    let source = DiffSource::DiffTool {
+        left: args[0].clone().into(),
+        right: args[1].clone().into(),
+        display_path: args.get(2).cloned().unwrap_or_else(|| args[1].clone()),
+    };
+
+    match run_tui(source, None, None, None, VcsPreference::Auto) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Run TUI in patch mode (stdin input).
+fn run_tui_patch(theme: Option<String>, vcs: VcsPreference) -> ExitCode {
+    let patch = match read_stdin_text() {
+        Ok(text) => text,
+        Err(err) => {
+            eprintln!("Error reading stdin: {}", err);
+            return ExitCode::from(1);
+        }
+    };
 
     if patch.trim().is_empty() {
         eprintln!("Error: empty input from stdin");
         return ExitCode::from(1);
     }
 
-    // Discover repository (optional for patch mode, but needed for theme/state)
+    run_tui_patch_from_text(patch, theme, vcs, "stdin")
+}
+
+fn run_tui_patch_from_text(
+    patch: String,
+    theme: Option<String>,
+    vcs: VcsPreference,
+    label: &str,
+) -> ExitCode {
     let cwd = match std::env::current_dir() {
         Ok(c) => c,
         Err(e) => {
@@ -406,7 +496,7 @@ fn run_tui_patch(theme: Option<String>) -> ExitCode {
         }
     };
 
-    let repo = match RepoRoot::discover(&cwd, VcsPreference::Auto) {
+    let repo = match RepoRoot::discover(&cwd, vcs) {
         Ok(repo) => repo,
         Err(quickdiff::core::RepoError::NotARepo(vcs)) => {
             eprintln!("Error: Not inside a {} repository", vcs);
@@ -418,24 +508,30 @@ fn run_tui_patch(theme: Option<String>) -> ExitCode {
         }
     };
 
-    // Create app in patch mode
-    let mut app = match App::new(repo, DiffSource::WorkingTree, None, theme.as_deref()) {
+    let loaded = load_preferences(
+        repo.path(),
+        &ConfigOverrides {
+            theme: theme.clone(),
+        },
+    );
+    let mut app = match App::new(repo, DiffSource::WorkingTree, None, loaded.prefs) {
         Ok(app) => app,
         Err(e) => {
             eprintln!("Error: {}", e);
             return ExitCode::from(1);
         }
     };
+    if let Some(warning) = loaded.warnings.into_iter().next() {
+        app.ui.status = Some(warning);
+    }
 
-    // Load patch
-    app.load_patch(patch, "stdin".to_string());
+    app.load_patch(patch, label.to_string());
 
     if app.files.is_empty() {
         eprintln!("Error: patch contains no files");
         return ExitCode::from(1);
     }
 
-    // Run TUI (reopen /dev/tty if stdin was piped)
     match run_tui_loop_tty(&mut app) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -496,6 +592,7 @@ fn run_tui(
     file_filter: Option<String>,
     theme: Option<String>,
     pr_number: Option<u32>,
+    vcs: VcsPreference,
 ) -> Result<()> {
     // Set panic hook to ensure terminal cleanup
     let default_hook = panic::take_hook();
@@ -511,7 +608,7 @@ fn run_tui(
 
     // Discover repository
     let cwd = std::env::current_dir().context("Failed to get current directory")?;
-    let repo = match RepoRoot::discover(&cwd, VcsPreference::Auto) {
+    let repo = match RepoRoot::discover(&cwd, vcs) {
         Ok(repo) => repo,
         Err(quickdiff::core::RepoError::NotARepo(vcs)) => {
             eprintln!("Error: Not inside a {} repository", vcs);
@@ -525,14 +622,25 @@ fn run_tui(
 
     let mut source = source;
     source.apply_defaults(repo.working_copy_parent_ref());
+    validate_source_inputs(&source)?;
 
     if repo.is_jj() && pr_number.is_some() {
         eprintln!("Error: PR mode requires a git repository");
         std::process::exit(1);
     }
 
+    let loaded = load_preferences(
+        repo.path(),
+        &ConfigOverrides {
+            theme: theme.clone(),
+        },
+    );
+
     // Create app with diff source and file filter
-    let mut app = App::new(repo.clone(), source, file_filter, theme.as_deref())?;
+    let mut app = App::new(repo.clone(), source, file_filter, loaded.prefs)?;
+    if let Some(warning) = loaded.warnings.into_iter().next() {
+        app.ui.status = Some(warning);
+    }
 
     // Handle PR mode initialization
     if let Some(n) = pr_number {

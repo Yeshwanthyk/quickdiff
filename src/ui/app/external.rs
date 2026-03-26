@@ -21,7 +21,11 @@ impl App {
             return;
         };
 
-        let path = file.path.to_absolute(&self.repo);
+        let Some(path) = self.selected_absolute_path() else {
+            self.ui.error = Some("No file selected to open".to_string());
+            self.ui.dirty = true;
+            return;
+        };
         let command_parts = match Self::editor_command() {
             Ok(parts) => parts,
             Err(msg) => {

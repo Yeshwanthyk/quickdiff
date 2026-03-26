@@ -7,6 +7,7 @@ use crate::core::{
     digest_hunk_changed_rows, CommentStore, DiffResult, FileCommentStore, RenderRow, Selector,
 };
 use crate::highlight::{query_scopes, LanguageId};
+use crate::ui::windowing::visible_range;
 
 impl App {
     /// Request diff for the currently selected file.
@@ -40,11 +41,37 @@ impl App {
             return;
         };
 
-        self.current_lang = file
-            .path
-            .extension()
-            .map(LanguageId::from_extension)
-            .unwrap_or(LanguageId::Plain);
+        self.current_lang = match &self.source {
+            DiffSource::FilePair {
+                right,
+                display_path,
+                ..
+            } => display_path
+                .as_deref()
+                .and_then(|path| {
+                    std::path::Path::new(path)
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                })
+                .or_else(|| right.extension().and_then(|ext| ext.to_str()))
+                .map(LanguageId::from_extension)
+                .unwrap_or(LanguageId::Plain),
+            DiffSource::DiffTool {
+                right,
+                display_path,
+                ..
+            } => std::path::Path::new(display_path)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .or_else(|| right.extension().and_then(|ext| ext.to_str()))
+                .map(LanguageId::from_extension)
+                .unwrap_or(LanguageId::Plain),
+            _ => file
+                .path
+                .extension()
+                .map(LanguageId::from_extension)
+                .unwrap_or(LanguageId::Plain),
+        };
 
         self.diff = None;
         self.viewer.hunk_view_rows.clear();
@@ -292,15 +319,20 @@ impl App {
         let mut rows = Vec::new();
         match self.viewer.view_mode {
             DiffViewMode::FullFile => {
-                for (offset, row) in diff.render_rows(self.viewer.scroll_y, height).enumerate() {
-                    let row_idx = self.viewer.scroll_y + offset;
-                    rows.push((row_idx, row));
+                let range = visible_range(diff.row_count(), self.viewer.scroll_y, height);
+                for row_idx in range {
+                    if let Some(row) = diff.rows().get(row_idx) {
+                        rows.push((row_idx, row));
+                    }
                 }
             }
             DiffViewMode::HunksOnly => {
-                let start = self.viewer.scroll_y;
-                let end = start.saturating_add(height);
-                for view_idx in start..end {
+                let range = visible_range(
+                    self.viewer.hunk_view_rows.len(),
+                    self.viewer.scroll_y,
+                    height,
+                );
+                for view_idx in range {
                     let Some(&row_idx) = self.viewer.hunk_view_rows.get(view_idx) else {
                         break;
                     };
@@ -348,7 +380,9 @@ impl App {
             }
         }
 
-        if delta_x < 0 {
+        if self.viewer.wrap_lines {
+            self.viewer.scroll_x = 0;
+        } else if delta_x < 0 {
             self.viewer.scroll_x = self.viewer.scroll_x.saturating_sub((-delta_x) as usize);
         } else {
             self.viewer.scroll_x += delta_x as usize;
@@ -357,6 +391,31 @@ impl App {
         if self.viewer.scroll_y != old_y || self.viewer.scroll_x != old_x {
             self.ui.dirty = true;
         }
+    }
+
+    /// Toggle wrapped-line rendering.
+    pub fn toggle_wrap_lines(&mut self) {
+        self.viewer.wrap_lines = !self.viewer.wrap_lines;
+        if self.viewer.wrap_lines {
+            self.viewer.scroll_x = 0;
+        }
+        self.ui.status = Some(if self.viewer.wrap_lines {
+            "Wrap enabled".to_string()
+        } else {
+            "Wrap disabled".to_string()
+        });
+        self.ui.dirty = true;
+    }
+
+    /// Toggle gutter line numbers.
+    pub fn toggle_line_numbers(&mut self) {
+        self.viewer.show_line_numbers = !self.viewer.show_line_numbers;
+        self.ui.status = Some(if self.viewer.show_line_numbers {
+            "Line numbers enabled".to_string()
+        } else {
+            "Line numbers hidden".to_string()
+        });
+        self.ui.dirty = true;
     }
 
     /// Jump to the next diff hunk.

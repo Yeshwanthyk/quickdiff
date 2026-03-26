@@ -3,6 +3,7 @@
 mod app;
 mod input;
 mod render;
+pub mod windowing;
 mod worker;
 
 pub use app::{App, DiffPaneMode, Focus, Mode};

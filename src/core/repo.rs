@@ -116,6 +116,24 @@ pub enum DiffSource {
     },
     /// Compare against a base ref (e.g., origin/main).
     Base(String),
+    /// Compare two explicit files on disk.
+    FilePair {
+        /// Left/original file path.
+        left: PathBuf,
+        /// Right/updated file path.
+        right: PathBuf,
+        /// Optional logical display path in UI chrome.
+        display_path: Option<String>,
+    },
+    /// Git difftool-compatible invocation.
+    DiffTool {
+        /// Left/original file path.
+        left: PathBuf,
+        /// Right/updated file path.
+        right: PathBuf,
+        /// Display path shown in UI chrome.
+        display_path: String,
+    },
     /// GitHub Pull Request.
     PullRequest {
         /// PR number.
@@ -138,6 +156,14 @@ impl DiffSource {
                 *to = default_ref.to_string();
             }
         }
+    }
+
+    /// Whether the source is backed by a repository diff rather than explicit files.
+    pub fn is_repo_backed(&self) -> bool {
+        !matches!(
+            self,
+            DiffSource::FilePair { .. } | DiffSource::DiffTool { .. }
+        )
     }
 }
 
@@ -1231,6 +1257,9 @@ pub fn load_diff_contents(
                 }
             }
         }
+        DiffSource::FilePair { left, right, .. } | DiffSource::DiffTool { left, right, .. } => {
+            Ok((std::fs::read(left)?, std::fs::read(right)?))
+        }
         DiffSource::PullRequest { .. } => {
             // PR mode uses patch extraction, not git show.
             // This should not be called for PR sources.
@@ -1556,6 +1585,31 @@ pub fn diff_source_display(source: &DiffSource, root: &RepoRoot) -> String {
             format!("{}..{}", take_chars(from, 7), take_chars(to, 7))
         }
         DiffSource::Base(base) => format!("vs {}", base),
+        DiffSource::FilePair {
+            left,
+            right,
+            display_path,
+        } => {
+            let label = display_path.clone().unwrap_or_else(|| {
+                right
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| "file compare".to_string())
+            });
+            format!(
+                "File Compare ({})",
+                truncate_chars(&format!("{} ↔ {}", left.display(), label), 50)
+            )
+        }
+        DiffSource::DiffTool {
+            left,
+            right: _,
+            display_path,
+        } => format!(
+            "Git Difftool ({})",
+            truncate_chars(&format!("{} ↔ {}", left.display(), display_path), 50,)
+        ),
         DiffSource::PullRequest { number, head, base } => {
             format!("PR #{} ({} → {})", number, head, base)
         }

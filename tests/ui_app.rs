@@ -1,5 +1,5 @@
 use git2::{IndexAddOption, Repository, Signature};
-use quickdiff::core::{DiffSource, RepoRoot, VcsPreference};
+use quickdiff::core::{DiffSource, RepoRoot, VcsPreference, ViewPreferences};
 use quickdiff::ui::{App, DiffPaneMode, Focus, Mode};
 use std::fs;
 use std::path::Path;
@@ -89,7 +89,11 @@ impl RepoHarness {
     }
 
     fn app_with_source(&self, source: DiffSource) -> App {
-        App::new(self.repo.clone(), source, None, Some("default")).unwrap()
+        let prefs = ViewPreferences {
+            theme: "default".to_string(),
+            ..Default::default()
+        };
+        App::new(self.repo.clone(), source, None, prefs).unwrap()
     }
 }
 

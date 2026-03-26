@@ -9,8 +9,24 @@ use crate::theme::Theme;
 /// Max width for path display in sidebar.
 pub const SIDEBAR_PATH_WIDTH: usize = 22;
 
-/// Gutter: 4 (line num) + 2 (separator) = 6 chars
+/// Default gutter width used by tests and fallback paths.
+#[allow(dead_code)]
 pub const GUTTER_WIDTH: usize = 6;
+
+/// Compute the line-number field width for the current buffers.
+pub fn line_number_width(max_line_num: usize) -> usize {
+    max_line_num.max(1).to_string().len().max(4)
+}
+
+/// Compute total gutter width for the current view preferences.
+pub fn gutter_width(show_line_numbers: bool, max_line_num: usize) -> usize {
+    let number_width = if show_line_numbers {
+        line_number_width(max_line_num)
+    } else {
+        0
+    };
+    number_width + 2 // marker + separator
+}
 
 /// Tab stop width for display alignment.
 pub const TAB_WIDTH: usize = 8;

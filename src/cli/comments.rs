@@ -185,6 +185,7 @@ fn list_files_for_source(
             let result = list_changed_files_from_base_with_merge_base(repo, base)?;
             Ok((result.files, Some(result.merge_base)))
         }
+        DiffSource::FilePair { .. } | DiffSource::DiffTool { .. } => Ok((Vec::new(), None)),
         DiffSource::PullRequest { .. } => {
             // PR files come from parsed diff output, not this function
             Ok((Vec::new(), None))

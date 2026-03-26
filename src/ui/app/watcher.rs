@@ -30,9 +30,11 @@ impl App {
                         r.files
                     })
             }
-            DiffSource::Commit(_) | DiffSource::Range { .. } | DiffSource::PullRequest { .. } => {
-                return
-            }
+            DiffSource::Commit(_)
+            | DiffSource::Range { .. }
+            | DiffSource::FilePair { .. }
+            | DiffSource::DiffTool { .. }
+            | DiffSource::PullRequest { .. } => return,
         };
 
         let Some(mut files) = new_files else {

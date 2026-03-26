@@ -235,6 +235,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &App) {
     let entries = [
         ("j/k or ↑/↓", "Navigate files / scroll vertically"),
         ("h/l or ←/→", "Scroll horizontally in diff"),
+        ("w / n", "Toggle wrapping / line numbers"),
         ("g / G", "Jump to start / end of file"),
         ("Tab, 1, 2", "Switch focus between sidebar/diff"),
         ("Space", "Toggle viewed & jump to next file"),

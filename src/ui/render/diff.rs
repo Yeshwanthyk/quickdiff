@@ -13,8 +13,8 @@ use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId, StyledSpan};
 use crate::ui::app::{App, DiffPaneMode, Focus};
 
 use super::helpers::{
-    boost_muted_fg, sanitize_char, spaces, style_to_color, visible_tab_spaces, SpanBuilder,
-    ThemeStyles, GUTTER_WIDTH,
+    boost_muted_fg, gutter_width, line_number_width, sanitize_char, spaces, style_to_color,
+    visible_tab_spaces, SpanBuilder, ThemeStyles,
 };
 
 /// Render the diff view.
@@ -223,6 +223,17 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         return;
     };
 
+    let max_line_num = app
+        .old_buffer
+        .as_ref()
+        .map(|buf| buf.line_count())
+        .into_iter()
+        .chain(app.new_buffer.as_ref().map(|buf| buf.line_count()))
+        .max()
+        .unwrap_or(1);
+    let line_num_width = line_number_width(max_line_num);
+    let gutter = gutter_width(app.viewer.show_line_numbers, max_line_num);
+
     // Check for sticky scope
     let scopes = if is_old {
         &app.old_scopes
@@ -242,10 +253,9 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     let sticky_scope = first_line_num.and_then(|line_num| compute_sticky_scope(line_num, scopes));
     let has_sticky = sticky_scope.is_some();
 
-    // Reserve 1 line for sticky header if present
     let sticky_height = if has_sticky { 1 } else { 0 };
     let content_height = (area.height as usize).saturating_sub(sticky_height);
-    let max_content = (area.width as usize).saturating_sub(GUTTER_WIDTH);
+    let pane_content_width = (area.width as usize).saturating_sub(gutter);
 
     struct RenderedLine {
         line_num_str: String,
@@ -256,8 +266,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         has_comment: bool,
     }
 
-    // First pass: build spans and compute max visible width in this viewport.
-    let visible_rows = app.visible_diff_rows(content_height);
+    let visible_rows = app.visible_diff_rows(content_height.max(1));
     let mut rendered: Vec<RenderedLine> = Vec::with_capacity(visible_rows.len());
     let mut max_visible_len = 0usize;
 
@@ -266,7 +275,6 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
             && diff
                 .hunk_at_row(row_idx)
                 .is_some_and(|h| app.commented_hunks.contains(&h));
-        // Extract line info based on pane side
         let (line_ref, bg_color, inline_bg, bg_style) = if is_old {
             match (&row.old, row.kind) {
                 (Some(line), ChangeKind::Equal) => (
@@ -324,19 +332,16 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         };
 
         let line_idx = line_ref.map(|l| l.line_num);
-        let line_num = line_idx.map(|n| n + 1);
+        let line_num_str = line_idx
+            .map(|n| format!("{:>width$}", n + 1, width = line_num_width))
+            .unwrap_or_else(|| spaces(line_num_width).to_string());
         let content = line_ref.map(|l| l.content.as_str()).unwrap_or("");
         let inline_spans = line_ref.and_then(|l| l.inline_spans.as_ref());
 
-        let line_num_str = line_num
-            .map(|n| format!("{:>4}", n))
-            .unwrap_or_else(|| "    ".to_string());
-
-        // Build syntax-highlighted content spans with truncation
         let mut builder = SpanBuilder::new();
         let mut visible_len = 0usize;
 
-        if !content.is_empty() && max_content > 0 {
+        if !content.is_empty() {
             let default_span = StyledSpan {
                 start: 0,
                 end: content.len(),
@@ -348,28 +353,30 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                 (false, Some(idx)) => app.new_highlights.line_spans(idx),
                 _ => None,
             };
-
             let hl_spans = match cached_spans {
                 Some(spans) if !spans.is_empty() => spans,
                 _ => std::slice::from_ref(&default_span),
             };
 
-            let scroll_x = app.viewer.scroll_x;
+            let scroll_x = if app.viewer.wrap_lines {
+                0
+            } else {
+                app.viewer.scroll_x
+            };
+            let content_budget = if app.viewer.wrap_lines {
+                content.chars().count().saturating_add(8)
+            } else {
+                pane_content_width
+            };
             let mut col_pos = 0usize;
 
             for hl in hl_spans {
-                if visible_len >= max_content {
-                    break;
-                }
-
                 let span_text = content.get(hl.start..hl.end).unwrap_or("");
                 if span_text.is_empty() {
                     continue;
                 }
 
                 let fg = style_to_color(hl.style_id, &app.theme);
-
-                // Check if this syntax span overlaps with any changed inline regions
                 let has_inline_changes = inline_spans.is_some_and(|spans| {
                     spans
                         .iter()
@@ -383,7 +390,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                         span_text,
                         style,
                         scroll_x,
-                        max_content,
+                        content_budget,
                         &mut col_pos,
                         &mut visible_len,
                     );
@@ -397,21 +404,16 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                         inline_bg,
                         spans,
                         scroll_x,
-                        max_content,
+                        content_budget,
                         &mut col_pos,
                         &mut visible_len,
                         hl.start,
                     );
                 }
-
-                if visible_len >= max_content {
-                    break;
-                }
             }
         }
 
         let code_spans = builder.finish();
-
         max_visible_len = max_visible_len.max(visible_len);
         rendered.push(RenderedLine {
             line_num_str,
@@ -423,41 +425,33 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         });
     }
 
-    // For the pane with the gutter on the right (old/left), shift the whole code block right
-    // uniformly based on the widest visible line in this viewport. This keeps code "right
-    // adjusted" without per-line right-justification that breaks indentation.
-    let common_left_pad = if is_old {
-        max_content.saturating_sub(max_visible_len)
+    let common_left_pad = if is_old && !app.viewer.wrap_lines {
+        pane_content_width.saturating_sub(max_visible_len)
     } else {
         0
     };
 
-    let total_height = if has_sticky {
-        content_height + 1
-    } else {
-        content_height
-    };
-    let mut lines: Vec<Line> = Vec::with_capacity(total_height);
+    let mut lines: Vec<Line> = Vec::new();
 
-    // Render sticky header if present
     if let Some(scope) = sticky_scope {
         let sticky_bg = app.theme.bg_elevated;
         let sticky_bg_style = app.theme_styles.bg_elevated;
-        let mut spans: Vec<Span> = Vec::new();
-
-        // Build display text: "kind name" (e.g., "fn compute_diff")
         let display_text = if scope.name.is_empty() {
             scope.kind.to_string()
         } else {
             format!("{} {}", scope.kind, scope.name)
         };
+        let text_len = display_text.chars().count();
+        let mut spans: Vec<Span> = Vec::new();
 
         if is_old {
-            // OLD pane: right-align the sticky text
-            let text_len = display_text.chars().count();
-            let padding = max_content.saturating_sub(text_len);
-            if padding > 0 {
-                spans.push(Span::styled(spaces(padding), sticky_bg_style));
+            let left_pad = if app.viewer.wrap_lines {
+                0
+            } else {
+                pane_content_width.saturating_sub(text_len)
+            };
+            if left_pad > 0 {
+                spans.push(Span::styled(spaces(left_pad), sticky_bg_style));
             }
             spans.push(Span::styled(
                 display_text,
@@ -466,25 +460,43 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
                     .bg(sticky_bg)
                     .add_modifier(Modifier::ITALIC),
             ));
-            // Gutter
-            spans.push(Span::styled(" ", sticky_bg_style));
-            spans.push(Span::styled("│", app.theme_styles.gutter_sep.bg(sticky_bg)));
-            spans.push(Span::styled("    ", sticky_bg_style));
+            let trailing = pane_content_width
+                .saturating_sub(left_pad)
+                .saturating_sub(text_len);
+            if trailing > 0 {
+                spans.push(Span::styled(spaces(trailing), sticky_bg_style));
+            }
+            append_gutter(
+                &mut spans,
+                None,
+                false,
+                sticky_bg,
+                sticky_bg_style,
+                is_old,
+                app.viewer.show_line_numbers,
+                line_num_width,
+                &app.theme_styles,
+            );
         } else {
-            // NEW pane: left-align with gutter
-            spans.push(Span::styled("    ", sticky_bg_style));
-            spans.push(Span::styled("│", app.theme_styles.gutter_sep.bg(sticky_bg)));
-            spans.push(Span::styled(" ", sticky_bg_style));
+            append_gutter(
+                &mut spans,
+                None,
+                false,
+                sticky_bg,
+                sticky_bg_style,
+                is_old,
+                app.viewer.show_line_numbers,
+                line_num_width,
+                &app.theme_styles,
+            );
             spans.push(Span::styled(
-                display_text.clone(),
+                display_text,
                 app.theme_styles
                     .text_muted
                     .bg(sticky_bg)
                     .add_modifier(Modifier::ITALIC),
             ));
-            // Pad to fill width
-            let text_len = display_text.chars().count();
-            let trailing = max_content.saturating_sub(text_len);
+            let trailing = pane_content_width.saturating_sub(text_len);
             if trailing > 0 {
                 spans.push(Span::styled(spaces(trailing), sticky_bg_style));
             }
@@ -494,65 +506,164 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
     }
 
     for row in rendered {
-        // Build the line with pane-specific layout:
-        // OLD (left):  [pad][code][pad] │[line_num] - right-adjusted block, gutter on right
-        // NEW (right): [line_num]│ [code][pad]      - left-aligned, gutter on left
-        let mut spans: Vec<Span> = Vec::new();
+        let wrapped_segments = wrap_rendered_segments(
+            &row.code_spans,
+            row.visible_len,
+            pane_content_width,
+            app.viewer.wrap_lines,
+        );
 
-        if is_old {
-            if common_left_pad > 0 {
-                spans.push(Span::styled(spaces(common_left_pad), row.bg_style));
-            }
-            spans.extend(row.code_spans);
-            let trailing = max_content
-                .saturating_sub(common_left_pad)
-                .saturating_sub(row.visible_len);
-            if trailing > 0 {
-                spans.push(Span::styled(spaces(trailing), row.bg_style));
-            }
-            let marker_char = if row.has_comment { "•" } else { " " };
-            let marker_style = if row.has_comment {
-                app.theme_styles.accent.bg(row.bg_color)
+        for (segment_idx, (segment_spans, segment_len)) in wrapped_segments.into_iter().enumerate()
+        {
+            let mut spans: Vec<Span> = Vec::new();
+            let show_marker = segment_idx == 0 && row.has_comment;
+            let line_num = if segment_idx == 0 {
+                Some(row.line_num_str.as_str())
             } else {
-                row.bg_style
+                None
             };
-            spans.push(Span::styled(marker_char, marker_style));
-            spans.push(Span::styled(
-                "│",
-                app.theme_styles.gutter_sep.bg(row.bg_color),
-            ));
-            spans.push(Span::styled(
-                row.line_num_str,
-                app.theme_styles.text_faint.bg(row.bg_color),
-            ));
-        } else {
-            spans.push(Span::styled(
-                row.line_num_str,
-                app.theme_styles.text_faint.bg(row.bg_color),
-            ));
-            spans.push(Span::styled(
-                "│",
-                app.theme_styles.gutter_sep.bg(row.bg_color),
-            ));
-            let marker_char = if row.has_comment { "•" } else { " " };
-            let marker_style = if row.has_comment {
-                app.theme_styles.accent.bg(row.bg_color)
+
+            if is_old {
+                let left_pad = if segment_idx == 0 { common_left_pad } else { 0 };
+                if left_pad > 0 {
+                    spans.push(Span::styled(spaces(left_pad), row.bg_style));
+                }
+                spans.extend(segment_spans);
+                let trailing = pane_content_width
+                    .saturating_sub(left_pad)
+                    .saturating_sub(segment_len);
+                if trailing > 0 {
+                    spans.push(Span::styled(spaces(trailing), row.bg_style));
+                }
+                append_gutter(
+                    &mut spans,
+                    line_num,
+                    show_marker,
+                    row.bg_color,
+                    row.bg_style,
+                    is_old,
+                    app.viewer.show_line_numbers,
+                    line_num_width,
+                    &app.theme_styles,
+                );
             } else {
-                row.bg_style
-            };
-            spans.push(Span::styled(marker_char, marker_style));
-            spans.extend(row.code_spans);
-            let trailing = max_content.saturating_sub(row.visible_len);
-            if trailing > 0 {
-                spans.push(Span::styled(spaces(trailing), row.bg_style));
+                append_gutter(
+                    &mut spans,
+                    line_num,
+                    show_marker,
+                    row.bg_color,
+                    row.bg_style,
+                    is_old,
+                    app.viewer.show_line_numbers,
+                    line_num_width,
+                    &app.theme_styles,
+                );
+                spans.extend(segment_spans);
+                let trailing = pane_content_width.saturating_sub(segment_len);
+                if trailing > 0 {
+                    spans.push(Span::styled(spaces(trailing), row.bg_style));
+                }
             }
+
+            lines.push(Line::from(spans));
         }
-
-        lines.push(Line::from(spans));
     }
 
     let para = Paragraph::new(lines);
     frame.render_widget(para, area);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_gutter(
+    spans: &mut Vec<Span<'static>>,
+    line_num: Option<&str>,
+    has_marker: bool,
+    bg_color: Color,
+    bg_style: Style,
+    is_old: bool,
+    show_line_numbers: bool,
+    line_num_width: usize,
+    styles: &ThemeStyles,
+) {
+    let marker_char = if has_marker { "•" } else { " " };
+    let marker_style = if has_marker {
+        styles.accent.bg(bg_color)
+    } else {
+        bg_style
+    };
+    let line_num = line_num.unwrap_or_else(|| spaces(line_num_width));
+
+    if is_old {
+        spans.push(Span::styled(marker_char, marker_style));
+        spans.push(Span::styled("│", styles.gutter_sep.bg(bg_color)));
+        if show_line_numbers {
+            spans.push(Span::styled(
+                line_num.to_string(),
+                styles.text_faint.bg(bg_color),
+            ));
+        }
+    } else {
+        if show_line_numbers {
+            spans.push(Span::styled(
+                line_num.to_string(),
+                styles.text_faint.bg(bg_color),
+            ));
+        }
+        spans.push(Span::styled("│", styles.gutter_sep.bg(bg_color)));
+        spans.push(Span::styled(marker_char, marker_style));
+    }
+}
+
+fn wrap_rendered_segments(
+    spans: &[Span<'static>],
+    visible_len: usize,
+    width: usize,
+    wrap_lines: bool,
+) -> Vec<(Vec<Span<'static>>, usize)> {
+    if !wrap_lines || width == 0 || visible_len <= width {
+        return vec![(spans.to_vec(), visible_len.min(width))];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = Vec::new();
+    let mut current_text = String::new();
+    let mut current_style: Option<Style> = None;
+    let mut current_len = 0usize;
+
+    let flush_text =
+        |current: &mut Vec<Span<'static>>, text: &mut String, style: &mut Option<Style>| {
+            if !text.is_empty() {
+                current.push(Span::styled(
+                    std::mem::take(text),
+                    style.unwrap_or_default(),
+                ));
+            }
+        };
+
+    for span in spans {
+        for ch in span.content.chars() {
+            if current_len == width {
+                flush_text(&mut current, &mut current_text, &mut current_style);
+                lines.push((std::mem::take(&mut current), current_len));
+                current_len = 0;
+                current_style = None;
+            }
+
+            if current_style != Some(span.style) {
+                flush_text(&mut current, &mut current_text, &mut current_style);
+                current_style = Some(span.style);
+            }
+            current_text.push(ch);
+            current_len += 1;
+        }
+    }
+
+    flush_text(&mut current, &mut current_text, &mut current_style);
+    if !current.is_empty() || lines.is_empty() {
+        lines.push((current, current_len));
+    }
+
+    lines
 }
 
 #[cfg(test)]

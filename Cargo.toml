@@ -40,6 +40,7 @@ directories = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+toml = "0.8"
 
 # Error handling
 anyhow = "1"
@@ -86,6 +87,14 @@ proptest = "1.8.0"
 
 [[bench]]
 name = "diff_bench"
+harness = false
+
+[[bench]]
+name = "highlight_bench"
+harness = false
+
+[[bench]]
+name = "render_bench"
 harness = false
 
 [profile.release]

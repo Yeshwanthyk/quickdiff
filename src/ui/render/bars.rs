@@ -104,10 +104,25 @@ pub fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Build right-aligned hunk indicator
-    let right_text = app
-        .current_hunk_info()
-        .map(|(cur, tot)| format!("hunk {}/{}  ", cur, tot))
-        .unwrap_or_default();
+    let mut right_parts = Vec::new();
+    if let Some((cur, tot)) = app.current_hunk_info() {
+        right_parts.push(format!("hunk {}/{}", cur, tot));
+    }
+    right_parts.push(if app.viewer.wrap_lines {
+        "wrap on".to_string()
+    } else {
+        "wrap off".to_string()
+    });
+    right_parts.push(if app.viewer.show_line_numbers {
+        "nums on".to_string()
+    } else {
+        "nums off".to_string()
+    });
+    let right_text = if right_parts.is_empty() {
+        String::new()
+    } else {
+        format!("{}  ", right_parts.join("  "))
+    };
     let right_len = right_text.chars().count();
 
     // Pad to fill width, leaving room for right indicator
@@ -318,6 +333,8 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("j/k", "scroll"),
             ("{/}", "hunks"),
             ("z", "fold"),
+            ("w", "wrap"),
+            ("n", "nums"),
             ("c", "comment"),
             ("C", "view"),
             ("␣", "view+next"),

@@ -163,6 +163,14 @@ fn handle_diff_key(app: &mut App, key: KeyEvent) -> bool {
             app.toggle_diff_view_mode();
             true
         }
+        KeyCode::Char('w') => {
+            app.toggle_wrap_lines();
+            true
+        }
+        KeyCode::Char('n') => {
+            app.toggle_line_numbers();
+            true
+        }
         KeyCode::PageDown => {
             app.scroll_diff(20, 0);
             true

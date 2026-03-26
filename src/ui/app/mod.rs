@@ -4,9 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::{
     diff_source_display, list_changed_files, list_changed_files_between,
-    list_changed_files_from_base_with_merge_base, list_commit_files, resolve_revision, ChangedFile,
-    CommentContext, CommentStore, DiffResult, DiffSource, FileCommentStore, FileViewedStore,
-    FuzzyMatcher, RelPath, RepoRoot, RepoWatcher, TextBuffer, ViewedStore,
+    list_changed_files_from_base_with_merge_base, list_commit_files, resolve_revision,
+    save_global_preferences, ChangedFile, CommentContext, CommentStore, DiffResult, DiffSource,
+    FileCommentStore, FileViewedStore, FuzzyMatcher, RelPath, RepoRoot, RepoWatcher, TextBuffer,
+    ViewPreferences, ViewedStore,
 };
 use crate::highlight::{FileHighlightCache, HighlighterCache, LanguageId, ScopeInfo};
 use crate::theme::Theme;
@@ -129,6 +130,7 @@ fn comment_context_for_source(source: &DiffSource) -> CommentContext {
             from: from.clone(),
             to: to.clone(),
         },
+        DiffSource::FilePair { .. } | DiffSource::DiffTool { .. } => CommentContext::Unscoped,
         DiffSource::PullRequest { number, .. } => CommentContext::Commit {
             // Use PR number as pseudo-commit context
             commit: format!("pr-{}", number),
@@ -157,9 +159,9 @@ impl App {
         repo: RepoRoot,
         source: DiffSource,
         file_filter: Option<String>,
-        theme_name: Option<&str>,
+        prefs: ViewPreferences,
     ) -> anyhow::Result<Self> {
-        let theme = Theme::load(theme_name.unwrap_or("default"));
+        let theme = Theme::load(&prefs.theme);
         let theme_styles = ThemeStyles::from_theme(&theme);
         // Canonicalize commit/range sources so comment contexts match across invocations.
         let source = match source {
@@ -184,15 +186,45 @@ impl App {
                 let result = list_changed_files_from_base_with_merge_base(&repo, base)?;
                 (result.files, Some(result.merge_base))
             }
+            DiffSource::FilePair {
+                right,
+                display_path,
+                ..
+            } => (
+                vec![ChangedFile::new(
+                    RelPath::new(display_path.clone().unwrap_or_else(|| {
+                        right
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| "file-compare".to_string())
+                    })),
+                    crate::core::FileChangeKind::Modified,
+                )],
+                None,
+            ),
+            DiffSource::DiffTool { display_path, .. } => (
+                vec![ChangedFile::new(
+                    RelPath::new(display_path.clone()),
+                    crate::core::FileChangeKind::Modified,
+                )],
+                None,
+            ),
             DiffSource::PullRequest { .. } => {
                 // PR files are loaded separately via load_pr()
                 (Vec::new(), None)
             }
         };
 
-        // Apply file filter if set
-        if let Some(ref filter) = file_filter {
-            files.retain(|f| f.path.as_str().contains(filter));
+        // Apply file filter if set.
+        let ignored_filter = matches!(
+            source,
+            DiffSource::FilePair { .. } | DiffSource::DiffTool { .. }
+        ) && file_filter.is_some();
+        if source.is_repo_backed() {
+            if let Some(ref filter) = file_filter {
+                files.retain(|f| f.path.as_str().contains(filter));
+            }
         }
 
         let viewed = FileViewedStore::new(repo.as_str())?;
@@ -224,6 +256,8 @@ impl App {
             viewer: ViewerState {
                 view_mode: DiffViewMode::HunksOnly,
                 pane_mode: DiffPaneMode::Both,
+                wrap_lines: prefs.wrap_lines,
+                show_line_numbers: prefs.line_numbers,
                 ..Default::default()
             },
             ui: UiState {
@@ -242,13 +276,17 @@ impl App {
             theme_styles,
             theme_list: Theme::list(),
             theme_selector_idx: 0,
-            theme_original: theme_name.unwrap_or("default").to_string(),
+            theme_original: prefs.theme.clone(),
             pr: PrState::default(),
             patch: PatchState::default(),
         };
 
         // Build path cache for sidebar
         app.rebuild_path_cache();
+
+        if ignored_filter {
+            app.ui.status = Some("Ignoring --file in file-compare mode".to_string());
+        }
 
         // Initialize file watcher for live-reload modes (WorkingTree, Base)
         if matches!(app.source, DiffSource::WorkingTree | DiffSource::Base(_)) {
@@ -306,7 +344,10 @@ impl App {
             DiffSource::WorkingTree | DiffSource::Base(_) => {
                 self.refresh_file_list();
             }
-            DiffSource::Commit(_) | DiffSource::Range { .. } => {
+            DiffSource::Commit(_)
+            | DiffSource::Range { .. }
+            | DiffSource::FilePair { .. }
+            | DiffSource::DiffTool { .. } => {
                 if self.files.is_empty() {
                     self.ui.status = Some("No files to reload".to_string());
                 } else {
@@ -341,7 +382,28 @@ impl App {
     /// Save state before exit.
     pub fn save_state(&self) -> anyhow::Result<()> {
         self.viewed.save()?;
+        save_global_preferences(&self.current_preferences())?;
         Ok(())
+    }
+
+    /// Current persisted view preferences.
+    pub fn current_preferences(&self) -> ViewPreferences {
+        ViewPreferences {
+            theme: self.theme_original.clone(),
+            wrap_lines: self.viewer.wrap_lines,
+            line_numbers: self.viewer.show_line_numbers,
+        }
+    }
+
+    /// Absolute path for the currently selected file when one exists on disk.
+    pub fn selected_absolute_path(&self) -> Option<std::path::PathBuf> {
+        let file = self.selected_file()?;
+        match &self.source {
+            DiffSource::FilePair { right, .. } | DiffSource::DiffTool { right, .. } => {
+                Some(right.clone())
+            }
+            _ => Some(file.path.to_absolute(&self.repo)),
+        }
     }
 
     /// Check if current file is viewed.

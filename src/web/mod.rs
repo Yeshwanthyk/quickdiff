@@ -150,6 +150,11 @@ fn build_git_patch(
             let merge_base = crate::core::resolve_merge_base(repo, base_ref)?;
             run_git(base, &["diff", "--no-color", &merge_base])?
         }
+        DiffSource::FilePair { .. } | DiffSource::DiffTool { .. } => {
+            return Err(anyhow::anyhow!(
+                "web export does not support file-compare sources yet"
+            ));
+        }
         DiffSource::PullRequest { number, .. } => {
             get_pr_diff(base, *number).map_err(|e| anyhow::anyhow!(e.to_string()))?
         }
@@ -215,6 +220,11 @@ fn build_jj_patch(
         DiffSource::Base(base_ref) => {
             // jj diff from base to working copy
             return run_jj_range(base, base_ref, "@", file_filter);
+        }
+        DiffSource::FilePair { .. } | DiffSource::DiffTool { .. } => {
+            return Err(anyhow::anyhow!(
+                "web export does not support file-compare sources yet"
+            ));
         }
         DiffSource::PullRequest { .. } => {
             return Err(anyhow::anyhow!("PR web mode requires git"));

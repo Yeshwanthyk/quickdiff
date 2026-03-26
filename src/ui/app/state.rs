@@ -100,6 +100,10 @@ pub struct ViewerState {
     pub view_mode: DiffViewMode,
     /// Pane layout mode.
     pub pane_mode: DiffPaneMode,
+    /// Whether long lines should wrap.
+    pub wrap_lines: bool,
+    /// Whether line numbers should be shown.
+    pub show_line_numbers: bool,
     /// Precomputed hunk view rows.
     pub hunk_view_rows: Vec<usize>,
 }
