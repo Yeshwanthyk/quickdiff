@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "rust.clone-density": {
+      "enabled": false
+    },
+    "rust.god-functions": {
+      "enabled": false
+    }
+  }
+}

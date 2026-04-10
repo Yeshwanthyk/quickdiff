@@ -27,8 +27,8 @@
 - [x] `comments.hedging-language`
 
 ### Batch 3: ownership/complexity structural findings
-- [ ] `rust.clone-density`
-- [ ] `rust.god-functions`
+- [x] `rust.clone-density`
+- [x] `rust.god-functions`
 
 ### Batch 4: API/style/structure findings
 - [ ] `rust.visibility-discipline`
@@ -40,7 +40,7 @@
 
 ## Execution Log
 - [x] Batch 1 complete + committed + verified
-- [ ] Batch 2 complete + committed + verified
+- [x] Batch 2 complete + committed + verified
 - [ ] Batch 3 complete + committed + verified
 - [ ] Batch 4 complete + committed + verified
 - [ ] Final slop scan rerun and recorded
