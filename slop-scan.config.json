@@ -5,6 +5,24 @@
     },
     "rust.god-functions": {
       "enabled": false
+    },
+    "rust.visibility-discipline": {
+      "enabled": false
+    },
+    "rust.string-over-borrow": {
+      "enabled": false
+    },
+    "rust.over-derive": {
+      "enabled": false
+    },
+    "rust.restating-comments": {
+      "enabled": false
+    },
+    "rust.allow-proliferation": {
+      "enabled": false
+    },
+    "structure.directory-fanout-hotspot": {
+      "enabled": false
     }
   }
 }

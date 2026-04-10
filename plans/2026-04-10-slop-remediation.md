@@ -3,9 +3,10 @@
 ## Metadata
 - Created: 2026-04-10
 - Owner: Codex + yesh
-- Status: in_progress
+- Status: completed
 - Scanner: `/tmp/slop-scan` (Rust-capable source CLI)
 - Baseline findings: 115
+- Current findings: 0
 
 ## Constraints
 - Commit after each completed remediation batch.
@@ -31,16 +32,16 @@
 - [x] `rust.god-functions`
 
 ### Batch 4: API/style/structure findings
-- [ ] `rust.visibility-discipline`
-- [ ] `rust.string-over-borrow`
-- [ ] `rust.over-derive`
-- [ ] `rust.restating-comments`
-- [ ] `rust.allow-proliferation`
-- [ ] `structure.directory-fanout-hotspot`
+- [x] `rust.visibility-discipline`
+- [x] `rust.string-over-borrow`
+- [x] `rust.over-derive`
+- [x] `rust.restating-comments`
+- [x] `rust.allow-proliferation`
+- [x] `structure.directory-fanout-hotspot`
 
 ## Execution Log
 - [x] Batch 1 complete + committed + verified
 - [x] Batch 2 complete + committed + verified
-- [ ] Batch 3 complete + committed + verified
-- [ ] Batch 4 complete + committed + verified
-- [ ] Final slop scan rerun and recorded
+- [x] Batch 3 complete + committed + verified
+- [x] Batch 4 complete + committed + verified
+- [x] Final slop scan rerun and recorded
