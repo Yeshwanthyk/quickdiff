@@ -68,7 +68,9 @@ impl Drop for DiffWorker {
         drop(self.request_tx.take());
         // Now the worker thread will exit, so we can join it
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            if handle.join().is_err() {
+                eprintln!("Warning: diff worker thread panicked while joining");
+            }
         }
     }
 }
@@ -98,7 +100,9 @@ fn worker_loop(
                 DiffLoadResponse::Error { id, message }
             }
         };
-        let _ = response_tx.send(response);
+        if response_tx.send(response).is_err() {
+            break;
+        }
     }
 }
 
@@ -199,7 +203,9 @@ impl Drop for PrWorker {
     fn drop(&mut self) {
         drop(self.request_tx.take());
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            if handle.join().is_err() {
+                eprintln!("Warning: PR worker thread panicked while joining");
+            }
         }
     }
 }
@@ -234,7 +240,9 @@ fn pr_worker_loop(
                 }
             }
         };
-        let _ = response_tx.send(response);
+        if response_tx.send(response).is_err() {
+            break;
+        }
     }
 }
 

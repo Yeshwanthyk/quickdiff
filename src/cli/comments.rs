@@ -51,7 +51,8 @@ const FLAGS_WITH_VALUES: &[&str] = &[
 
 /// Check if arg is a known flag that takes a value.
 fn takes_value(arg: &str) -> bool {
-    FLAGS_WITH_VALUES.contains(&arg)
+    let flag_name = arg.split_once('=').map_or(arg, |(name, _)| name);
+    FLAGS_WITH_VALUES.contains(&flag_name)
 }
 
 fn parse_context(

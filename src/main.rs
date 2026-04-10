@@ -84,13 +84,61 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        // Disable mouse capture first (while still in raw mode)
-        let _ = execute!(io::stdout(), DisableMouseCapture);
-        let _ = io::stdout().flush();
-        // Then leave alternate screen and disable raw mode
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
-        let _ = disable_raw_mode();
-        let _ = io::stdout().flush();
+        restore_terminal_state("terminal guard cleanup");
+    }
+}
+
+fn disable_mouse_capture_with_warning(context: &str) {
+    let mut stdout = io::stdout();
+    if let Err(e) = execute!(stdout, DisableMouseCapture) {
+        eprintln!("Warning: failed to disable mouse capture ({context}): {e}");
+    }
+    if let Err(e) = stdout.flush() {
+        eprintln!("Warning: failed to flush stdout ({context}): {e}");
+    }
+}
+
+fn restore_terminal_state(context: &str) {
+    disable_mouse_capture_with_warning(context);
+
+    let mut stdout = io::stdout();
+    if let Err(e) = execute!(stdout, LeaveAlternateScreen) {
+        eprintln!("Warning: failed to leave alternate screen ({context}): {e}");
+    }
+    if let Err(e) = disable_raw_mode() {
+        eprintln!("Warning: failed to disable raw mode ({context}): {e}");
+    }
+    if let Err(e) = stdout.flush() {
+        eprintln!("Warning: failed to flush stdout ({context}): {e}");
+    }
+}
+
+fn open_html_in_browser(path: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        match std::process::Command::new("open").arg(path).status() {
+            Ok(status) if status.success() => {}
+            Ok(status) => eprintln!("Warning: open exited with status: {}", status),
+            Err(e) => eprintln!("Warning: failed to launch open: {}", e),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        match std::process::Command::new("xdg-open").arg(path).status() {
+            Ok(status) if status.success() => {}
+            Ok(status) => eprintln!("Warning: xdg-open exited with status: {}", status),
+            Err(e) => eprintln!("Warning: failed to launch xdg-open: {}", e),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        match std::process::Command::new("start").arg(path).status() {
+            Ok(status) if status.success() => {}
+            Ok(status) => eprintln!("Warning: start exited with status: {}", status),
+            Err(e) => eprintln!("Warning: failed to launch start: {}", e),
+        }
     }
 }
 
@@ -403,14 +451,7 @@ fn run_cli_web(args: &[String]) -> ExitCode {
     println!("Generated: {}", out_file);
 
     if open_browser {
-        #[cfg(target_os = "macos")]
-        let _ = std::process::Command::new("open").arg(&out_file).status();
-        #[cfg(target_os = "linux")]
-        let _ = std::process::Command::new("xdg-open")
-            .arg(&out_file)
-            .status();
-        #[cfg(target_os = "windows")]
-        let _ = std::process::Command::new("start").arg(&out_file).status();
+        open_html_in_browser(&out_file);
     }
 
     ExitCode::SUCCESS
@@ -557,21 +598,25 @@ fn run_tui_loop_tty(app: &mut App) -> Result<()> {
         .context("Failed to open /dev/tty - stdin mode requires a terminal")?;
     let tty_fd = tty.as_raw_fd();
 
-    // Duplicate stdin to restore later
+    // SAFETY: Duplicating file descriptor 0 is thread-safe and does not alias Rust references.
+    // We validate the returned fd before using it.
     let orig_stdin = unsafe { libc::dup(0) };
     if orig_stdin < 0 {
         return Err(anyhow::anyhow!("Failed to dup stdin"));
     }
 
-    // Redirect stdin to /dev/tty
+    // SAFETY: `tty_fd` and target fd 0 are valid descriptors at this point.
+    // `dup2` atomically replaces stdin with `/dev/tty` for the current process.
     if unsafe { libc::dup2(tty_fd, 0) } < 0 {
+        // SAFETY: `orig_stdin` was returned by `dup` above and has not been closed yet.
         unsafe { libc::close(orig_stdin) };
         return Err(anyhow::anyhow!("Failed to redirect stdin to /dev/tty"));
     }
 
     let result = run_tui_loop(app);
 
-    // Restore original stdin
+    // SAFETY: `orig_stdin` is a valid duplicated descriptor and 0 is stdin.
+    // Restoring via `dup2` and then closing `orig_stdin` returns fd ownership to the OS.
     unsafe {
         libc::dup2(orig_stdin, 0);
         libc::close(orig_stdin);
@@ -598,11 +643,7 @@ fn run_tui(
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         // Restore terminal before printing panic
-        let _ = execute!(io::stdout(), DisableMouseCapture);
-        let _ = io::stdout().flush();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
-        let _ = disable_raw_mode();
-        let _ = io::stdout().flush();
+        restore_terminal_state("panic hook");
         default_hook(info);
     }));
 
@@ -731,8 +772,7 @@ fn run_event_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Resu
 
         if app.should_quit {
             // Disable mouse capture before exiting
-            let _ = execute!(io::stdout(), DisableMouseCapture);
-            let _ = io::stdout().flush();
+            disable_mouse_capture_with_warning("event loop shutdown");
             break;
         }
     }

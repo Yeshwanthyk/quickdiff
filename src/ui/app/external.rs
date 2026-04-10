@@ -35,9 +35,11 @@ impl App {
             }
         };
 
-        let (program, args) = command_parts
-            .split_first()
-            .expect("editor command is non-empty");
+        let Some((program, args)) = command_parts.split_first() else {
+            self.ui.error = Some("Editor command is empty".to_string());
+            self.ui.dirty = true;
+            return;
+        };
         let mut cmd = Command::new(program);
         cmd.args(args);
         cmd.arg(&path);

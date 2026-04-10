@@ -143,7 +143,10 @@ pub fn get_pr_diff(repo_path: &std::path::Path, pr_number: u32) -> Result<String
         .spawn()?;
 
     // Read with a hard cap to prevent OOM
-    let mut stdout = child.stdout.take().expect("stdout piped");
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| GhError::ApiError("Failed to capture gh stdout".to_string()))?;
     let mut buffer = Vec::with_capacity(64 * 1024); // 64KB initial
     let mut total_read = 0;
     let mut temp = [0u8; 8192];
@@ -155,7 +158,9 @@ pub fn get_pr_diff(repo_path: &std::path::Path, pr_number: u32) -> Result<String
                 total_read += n;
                 if total_read > MAX_DIFF_SIZE {
                     // Kill the process and return error
-                    let _ = child.kill();
+                    if let Err(e) = child.kill() {
+                        eprintln!("Warning: failed to stop gh diff process: {}", e);
+                    }
                     return Err(GhError::DiffTooLarge { max: MAX_DIFF_SIZE });
                 }
                 buffer.extend_from_slice(&temp[..n]);
@@ -168,9 +173,12 @@ pub fn get_pr_diff(repo_path: &std::path::Path, pr_number: u32) -> Result<String
     let status = child.wait()?;
     if !status.success() {
         // Try to read stderr for error message
-        let mut stderr = child.stderr.take().expect("stderr piped");
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| GhError::ApiError("Failed to capture gh stderr".to_string()))?;
         let mut stderr_buf = Vec::new();
-        let _ = stderr.read_to_end(&mut stderr_buf);
+        stderr.read_to_end(&mut stderr_buf)?;
         let stderr_str = String::from_utf8_lossy(&stderr_buf);
         return Err(GhError::ApiError(stderr_str.trim().to_string()));
     }

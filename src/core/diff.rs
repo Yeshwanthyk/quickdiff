@@ -124,7 +124,9 @@ impl DiffResult {
 
     /// Get render rows for a viewport.
     pub fn render_rows(&self, start_row: usize, height: usize) -> impl Iterator<Item = &RenderRow> {
-        self.rows.iter().skip(start_row).take(height)
+        let start = start_row.min(self.rows.len());
+        let end = start.saturating_add(height).min(self.rows.len());
+        self.rows[start..end].iter()
     }
 
     /// Find the next hunk after the given row (for `}` navigation).

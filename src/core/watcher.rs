@@ -43,7 +43,7 @@ impl RepoWatcher {
 
                     if relevant {
                         // Coalesce all events into single Changed signal
-                        let _ = tx.send(WatchEvent::Changed);
+                        if tx.send(WatchEvent::Changed).is_err() {}
                     }
                 }
             },
