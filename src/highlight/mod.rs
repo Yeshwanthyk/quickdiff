@@ -141,9 +141,7 @@ const HIGHLIGHT_NAMES: &[&str] = &[
     "variable.parameter",
 ];
 
-// ============================================================================
 // Scope Queries
-// ============================================================================
 
 /// Information about a scope-defining construct (function, class, etc).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,9 +303,7 @@ pub fn find_enclosing_scope(scopes: &[ScopeInfo], line: usize) -> Option<&ScopeI
         .min_by_key(|s| s.end_line - s.start_line)
 }
 
-// ============================================================================
 // Highlight Styles
-// ============================================================================
 
 /// Map highlight name to StyleId.
 fn highlight_name_to_style(name: &str) -> StyleId {

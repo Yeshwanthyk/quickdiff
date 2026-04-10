@@ -23,8 +23,8 @@
 - [x] `structure.pass-through-wrappers`
 
 ### Batch 2: comment-quality findings
-- [ ] `comments.banner-dividers`
-- [ ] `comments.hedging-language`
+- [x] `comments.banner-dividers`
+- [x] `comments.hedging-language`
 
 ### Batch 3: ownership/complexity structural findings
 - [ ] `rust.clone-density`
@@ -39,7 +39,7 @@
 - [ ] `structure.directory-fanout-hotspot`
 
 ## Execution Log
-- [ ] Batch 1 complete + committed + verified
+- [x] Batch 1 complete + committed + verified
 - [ ] Batch 2 complete + committed + verified
 - [ ] Batch 3 complete + committed + verified
 - [ ] Batch 4 complete + committed + verified

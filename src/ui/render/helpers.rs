@@ -222,9 +222,7 @@ impl Default for SpanBuilder {
     }
 }
 
-// ============================================================================
-// Static spaces buffer for efficient padding
-// ============================================================================
+// Static spaces buffer for efficient padding.
 
 /// Maximum expected terminal width for padding purposes.
 /// Most terminals are under 500 columns; we use 512 for alignment.

@@ -325,9 +325,7 @@ fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
     }
 }
 
-// ============================================================================
-// Mouse Handling
-// ============================================================================
+// Mouse handling
 
 /// Sidebar width including borders (matches render.rs layout).
 const SIDEBAR_WIDTH: u16 = 32;

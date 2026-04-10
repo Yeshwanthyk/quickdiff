@@ -35,7 +35,7 @@ pub struct ReviewData {
 pub struct ReviewFile {
     /// File path.
     pub path: String,
-    /// File summary (empty for now).
+    /// File summary.
     pub summary: String,
     /// Lines added.
     pub additions: usize,

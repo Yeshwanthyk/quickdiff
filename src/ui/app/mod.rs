@@ -434,24 +434,11 @@ impl App {
     pub fn clear_dirty(&mut self) {
         self.ui.dirty = false;
     }
-
-    // ========================================================================
-    // Sidebar filter
-    // ========================================================================
-
-    // ========================================================================
-    // Theme selector
-    // ========================================================================
-
-    // ========================================================================
-    // File watching
-    // ========================================================================
 }
 
 /// Extract old and new content from a unified diff patch.
 ///
-/// This is a simplified extraction that reconstructs file content from
-/// the patch hunks. Not perfect but good enough for diff display.
+/// Reconstructs file content from patch hunks for display in the diff viewer.
 fn extract_content_from_patch(patch: &str) -> (String, String) {
     let mut old_lines: Vec<&str> = Vec::new();
     let mut new_lines: Vec<&str> = Vec::new();
