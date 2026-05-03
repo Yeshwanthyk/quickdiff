@@ -1,6 +1,6 @@
 //! CLI commands for comment management.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
 
 use serde::Deserialize;
@@ -732,6 +732,23 @@ fn cmd_import(repo: &RepoRoot, args: &[String]) -> ExitCode {
     };
 
     let existing = store.list(true).into_iter().cloned().collect::<Vec<_>>();
+    let mut seen: HashSet<(String, String, String)> = existing
+        .iter()
+        .filter(|comment| comment.context.matches(&context))
+        .flat_map(|comment| {
+            comment
+                .anchor
+                .selectors
+                .iter()
+                .map(|selector| match selector {
+                    Selector::DiffHunkV1(hunk) => (
+                        comment.path.as_str().to_string(),
+                        hunk.digest_hex.clone(),
+                        comment.message.trim().to_string(),
+                    ),
+                })
+        })
+        .collect();
     let mut report = ImportReport {
         accepted: 0,
         rejected: Vec::new(),
@@ -763,18 +780,12 @@ fn cmd_import(repo: &RepoRoot, args: &[String]) -> ExitCode {
             continue;
         };
 
-        if existing.iter().any(|comment| {
-            comment.path == rel_path
-                && comment.context.matches(&context)
-                && comment.message.trim() == message
-                && comment
-                    .anchor
-                    .selectors
-                    .iter()
-                    .any(|selector| match selector {
-                        Selector::DiffHunkV1(hunk) => hunk.digest_hex == item.hunk_digest,
-                    })
-        }) {
+        let seen_key = (
+            rel_path.as_str().to_string(),
+            item.hunk_digest.clone(),
+            message.to_string(),
+        );
+        if seen.contains(&seen_key) {
             report.rejected.push(ImportRejected {
                 index,
                 reason: "duplicate comment".to_string(),
@@ -823,7 +834,10 @@ fn cmd_import(repo: &RepoRoot, args: &[String]) -> ExitCode {
             })],
         };
         match store.add(rel_path, context.clone(), message.to_string(), anchor) {
-            Ok(_) => report.accepted += 1,
+            Ok(_) => {
+                seen.insert(seen_key);
+                report.accepted += 1;
+            }
             Err(e) => report.rejected.push(ImportRejected {
                 index,
                 reason: format!("failed to store comment: {}", e),

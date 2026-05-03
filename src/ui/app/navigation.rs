@@ -97,7 +97,8 @@ impl App {
     pub fn toggle_focus(&mut self) {
         self.focus = match self.focus {
             Focus::Sidebar => Focus::Diff,
-            Focus::Diff => Focus::Sidebar,
+            Focus::Diff if self.sidebar.visible => Focus::Sidebar,
+            Focus::Diff => Focus::Diff,
         };
         self.ui.dirty = true;
     }
