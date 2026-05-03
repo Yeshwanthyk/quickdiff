@@ -1,13 +1,16 @@
 //! CLI commands for comment management.
 
+use std::collections::HashMap;
 use std::process::ExitCode;
 
+use serde::Deserialize;
+
 use crate::core::{
-    digest_hunk_changed_rows, format_anchor_summary, list_changed_files,
-    list_changed_files_between, list_changed_files_from_base_with_merge_base, list_commit_files,
-    load_diff_contents, resolve_revision, selector_from_hunk, Anchor, ChangedFile, CommentContext,
-    CommentStatus, CommentStore, DiffResult, DiffSource, FileCommentStore, RelPath, RepoError,
-    RepoRoot, Selector, TextBuffer,
+    format_anchor_summary, list_changed_files, list_changed_files_between,
+    list_changed_files_from_base_with_merge_base, list_commit_files, load_diff_contents,
+    resolve_revision, selector_from_hunk, Anchor, ChangedFile, CommentContext, CommentStatus,
+    CommentStore, DiffResult, DiffSource, FileCommentStore, RelPath, RepoError, RepoRoot, Selector,
+    TextBuffer,
 };
 
 /// Run a comments subcommand.
@@ -18,6 +21,9 @@ pub fn run_comments_command(repo: &RepoRoot, args: &[String]) -> ExitCode {
         eprintln!("Commands:");
         eprintln!("  list [--all] [--json] [--path <path>] [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>]");
         eprintln!("  add  [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>] --path <path> (--hunk <n>|--old-line <n>|--new-line <n>) --message <text>");
+        eprintln!(
+            "  import --json <file> [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>]"
+        );
         eprintln!("  resolve <id>");
         return ExitCode::from(1);
     }
@@ -28,6 +34,7 @@ pub fn run_comments_command(repo: &RepoRoot, args: &[String]) -> ExitCode {
     match cmd {
         "list" => cmd_list(repo, cmd_args),
         "add" => cmd_add(repo, cmd_args),
+        "import" => cmd_import(repo, cmd_args),
         "resolve" => cmd_resolve(repo, cmd_args),
         _ => {
             eprintln!("Unknown command: {}", cmd);
@@ -46,6 +53,7 @@ const FLAGS_WITH_VALUES: &[&str] = &[
     "--old-line",
     "--new-line",
     "--message",
+    "--json",
     "-m",
 ];
 
@@ -323,6 +331,25 @@ fn cmd_list(repo: &RepoRoot, args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[derive(Debug, Deserialize)]
+struct ImportComment {
+    path: String,
+    hunk_digest: String,
+    message: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ImportRejected {
+    index: usize,
+    reason: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ImportReport {
+    accepted: usize,
+    rejected: Vec<ImportRejected>,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum HunkSelectorArg {
     Index(usize),
@@ -533,10 +560,8 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
     match store.add(rel_path, context, message, anchor) {
         Ok(id) => {
             let digest_prefix = diff
-                .hunks()
-                .get(hunk_idx)
-                .map(|h| digest_hunk_changed_rows(&diff, h))
-                .map(|d| d.get(..8).unwrap_or(&d).to_string())
+                .hunk_digest(hunk_idx)
+                .map(|d| d.get(..8).unwrap_or(d).to_string())
                 .unwrap_or_else(|| "????????".to_string());
             println!("Created comment {} [{}]", id, digest_prefix);
             ExitCode::SUCCESS
@@ -545,6 +570,188 @@ fn cmd_add(repo: &RepoRoot, args: &[String]) -> ExitCode {
             eprintln!("Failed to create comment: {}", e);
             ExitCode::from(1)
         }
+    }
+}
+
+fn cmd_import(repo: &RepoRoot, args: &[String]) -> ExitCode {
+    let (context, source) = match parse_context(repo, args) {
+        Ok(Some(v)) => v,
+        Ok(None) => (CommentContext::Worktree, DiffSource::WorkingTree),
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let mut json_path: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--json" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("--json requires a value");
+                    return ExitCode::from(1);
+                }
+                json_path = Some(args[i].clone());
+            }
+            other if takes_value(other) => i += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let Some(json_path) = json_path else {
+        eprintln!("Usage: quickdiff comments import --json <file>");
+        return ExitCode::from(1);
+    };
+
+    let input = match std::fs::read_to_string(&json_path) {
+        Ok(input) => input,
+        Err(e) => {
+            eprintln!("Failed to read {}: {}", json_path, e);
+            return ExitCode::from(1);
+        }
+    };
+    let imports: Vec<ImportComment> = match serde_json::from_str(&input) {
+        Ok(imports) => imports,
+        Err(e) => {
+            eprintln!("Failed to parse JSON: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let (files, merge_base) = match list_files_for_source(repo, &source) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Failed to list files for source: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+    let files_by_path: HashMap<_, _> = files
+        .iter()
+        .map(|file| (file.path.as_str().to_string(), file))
+        .collect();
+
+    let mut store = match FileCommentStore::open(repo) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open comment store: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let existing = store.list(true).into_iter().cloned().collect::<Vec<_>>();
+    let mut report = ImportReport {
+        accepted: 0,
+        rejected: Vec::new(),
+    };
+    let mut diff_cache: HashMap<String, DiffResult> = HashMap::new();
+
+    for (index, item) in imports.into_iter().enumerate() {
+        let message = item.message.trim();
+        if message.is_empty() {
+            report.rejected.push(ImportRejected {
+                index,
+                reason: "message is empty".to_string(),
+            });
+            continue;
+        }
+
+        let Ok(rel_path) = RelPath::try_new(item.path.clone()) else {
+            report.rejected.push(ImportRejected {
+                index,
+                reason: "path must be relative".to_string(),
+            });
+            continue;
+        };
+        let Some(file) = files_by_path.get(rel_path.as_str()) else {
+            report.rejected.push(ImportRejected {
+                index,
+                reason: "path is not part of current changeset".to_string(),
+            });
+            continue;
+        };
+
+        if existing.iter().any(|comment| {
+            comment.path == rel_path
+                && comment.context.matches(&context)
+                && comment.message.trim() == message
+                && comment
+                    .anchor
+                    .selectors
+                    .iter()
+                    .any(|selector| match selector {
+                        Selector::DiffHunkV1(hunk) => hunk.digest_hex == item.hunk_digest,
+                    })
+        }) {
+            report.rejected.push(ImportRejected {
+                index,
+                reason: "duplicate comment".to_string(),
+            });
+            continue;
+        }
+
+        if !diff_cache.contains_key(rel_path.as_str()) {
+            let (old_bytes, new_bytes) =
+                match load_diff_contents(repo, &source, file, merge_base.as_deref()) {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        report.rejected.push(ImportRejected {
+                            index,
+                            reason: format!("failed to load diff: {}", e),
+                        });
+                        continue;
+                    }
+                };
+            diff_cache.insert(
+                rel_path.as_str().to_string(),
+                DiffResult::compute(&TextBuffer::new(&old_bytes), &TextBuffer::new(&new_bytes)),
+            );
+        }
+        let Some(diff) = diff_cache.get(rel_path.as_str()) else {
+            continue;
+        };
+        let Some((_, hunk)) = diff
+            .hunks()
+            .iter()
+            .enumerate()
+            .find(|(_, hunk)| hunk.digest_hex == item.hunk_digest)
+        else {
+            report.rejected.push(ImportRejected {
+                index,
+                reason: "hunk digest not found".to_string(),
+            });
+            continue;
+        };
+
+        let anchor = Anchor {
+            selectors: vec![Selector::DiffHunkV1(crate::core::DiffHunkSelectorV1 {
+                old_range: hunk.old_range,
+                new_range: hunk.new_range,
+                digest_hex: hunk.digest_hex.clone(),
+            })],
+        };
+        match store.add(rel_path, context.clone(), message.to_string(), anchor) {
+            Ok(_) => report.accepted += 1,
+            Err(e) => report.rejected.push(ImportRejected {
+                index,
+                reason: format!("failed to store comment: {}", e),
+            }),
+        }
+    }
+
+    match serde_json::to_string_pretty(&report) {
+        Ok(output) => println!("{}", output),
+        Err(e) => {
+            eprintln!("JSON serialization error: {}", e);
+            return ExitCode::from(1);
+        }
+    }
+    if report.rejected.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(2)
     }
 }
 
