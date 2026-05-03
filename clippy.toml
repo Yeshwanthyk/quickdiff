@@ -1,0 +1,9 @@
+msrv = "1.75"
+avoid-breaking-exported-api = false
+check-inconsistent-struct-field-initializers = true
+lint-commented-code = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+allow-unwrap-in-tests = true

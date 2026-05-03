@@ -5,15 +5,32 @@
 Run these commands constantly; the project should stay green.
 
 ```bash
-cargo fmt --check      # Format check
-cargo clippy --all-targets --all-features -- -D warnings  # Lint
-cargo test             # Unit tests
+cargo fmt-check
+cargo lint
+cargo test-all
+cargo deny-check
+npx -y slop-scan scan . --lint
 ```
 
 Or all at once:
 ```bash
-cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test
+scripts/lint.sh
 ```
+
+## Agent Coding Policy
+
+- Write code that passes the repo lint policy without broad suppressions.
+- No `unwrap`, `expect`, `panic!`, `todo!`, `unimplemented!`, or `unreachable!` in production code.
+- No `#[allow(...)]` unless narrowly scoped with an inline reason.
+- Keep visibility narrow; default private, then `pub(crate)`, then `pub` only when needed.
+- Prefer borrowed inputs (`&str`, slices, references) over owned `String` / `Vec` when ownership is not required.
+- Avoid clone-driven ownership fixes; reshape borrowing or data flow first.
+- Prefer `?` over verbose `match Ok/Err` pass-through code.
+- Avoid byte indexing/slicing `String` / `&str`; use UTF-8-safe APIs.
+- Public library APIs should expose typed domain errors; binaries may use `anyhow` internally at orchestration boundaries.
+- Every unsafe block needs a `// SAFETY:` explanation; prefer safe wrapper boundaries.
+- Preserve error source/context when crossing boundaries.
+- See `docs/rust-lint-policy.md` for the layered lint policy.
 
 ## Project Structure
 

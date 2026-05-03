@@ -846,7 +846,7 @@ class Foo {
             &[StyledSpan {
                 start: 0,
                 end: 5,
-                style_id: StyleId::Default,
+                style_id: StyleId::Default
             }]
         );
 
@@ -856,7 +856,7 @@ class Foo {
             &[StyledSpan {
                 start: 0,
                 end: 4,
-                style_id: StyleId::Default,
+                style_id: StyleId::Default
             }]
         );
     }

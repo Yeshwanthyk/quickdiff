@@ -42,8 +42,7 @@ impl RepoWatcher {
                     let relevant = events.iter().any(|e| !is_ignored_path(&e.path, &repo_path));
 
                     if relevant {
-                        // Coalesce all events into single Changed signal
-                        if tx.send(WatchEvent::Changed).is_err() {}
+                        let _send_result = tx.send(WatchEvent::Changed);
                     }
                 }
             },
