@@ -394,6 +394,24 @@ fn comment_flow_updates_counts() {
 }
 
 #[test]
+fn comment_draft_editor_preserves_utf8_and_newlines() {
+    let harness = RepoHarness::new();
+    let mut app = harness.app();
+    select_file(&mut app, FILE_RUST);
+    app.start_add_comment();
+
+    app.comment_insert_char('é');
+    app.comment_insert_char('x');
+    app.comment_move_left();
+    app.comment_insert_newline();
+    app.comment_move_line_end();
+    app.comment_backspace();
+
+    assert_eq!(app.comments.draft, "é\n");
+    assert_eq!(app.comments.draft_cursor, app.comments.draft.len());
+}
+
+#[test]
 fn theme_selector_preview_and_revert() {
     let harness = RepoHarness::new();
     let mut app = harness.app();

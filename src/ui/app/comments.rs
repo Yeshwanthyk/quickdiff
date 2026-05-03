@@ -35,6 +35,7 @@ impl App {
 
         self.ui.mode = Mode::AddComment;
         self.comments.draft.clear();
+        self.comments.draft_cursor = 0;
         self.ui.error = None;
         self.ui.status = None;
         self.ui.dirty = true;
@@ -44,6 +45,7 @@ impl App {
     pub fn cancel_add_comment(&mut self) {
         self.ui.mode = Mode::Normal;
         self.comments.draft.clear();
+        self.comments.draft_cursor = 0;
         self.ui.dirty = true;
     }
 
@@ -125,7 +127,83 @@ impl App {
 
         self.ui.mode = Mode::Normal;
         self.comments.draft.clear();
+        self.comments.draft_cursor = 0;
         self.ui.dirty = true;
+    }
+
+    /// Insert a character at the comment draft cursor.
+    pub fn comment_insert_char(&mut self, ch: char) {
+        self.comments.draft.insert(self.comments.draft_cursor, ch);
+        self.comments.draft_cursor += ch.len_utf8();
+        self.mark_dirty();
+    }
+
+    /// Insert a newline at the comment draft cursor.
+    pub fn comment_insert_newline(&mut self) {
+        self.comment_insert_char('\n');
+    }
+
+    /// Delete the character before the comment draft cursor.
+    pub fn comment_backspace(&mut self) {
+        if self.comments.draft_cursor == 0 {
+            return;
+        }
+        if let Some((idx, _)) = self.comments.draft[..self.comments.draft_cursor]
+            .char_indices()
+            .next_back()
+        {
+            self.comments
+                .draft
+                .replace_range(idx..self.comments.draft_cursor, "");
+            self.comments.draft_cursor = idx;
+            self.mark_dirty();
+        }
+    }
+
+    /// Move the comment draft cursor one character left.
+    pub fn comment_move_left(&mut self) {
+        if self.comments.draft_cursor == 0 {
+            return;
+        }
+        if let Some((idx, _)) = self.comments.draft[..self.comments.draft_cursor]
+            .char_indices()
+            .next_back()
+        {
+            self.comments.draft_cursor = idx;
+            self.mark_dirty();
+        }
+    }
+
+    /// Move the comment draft cursor one character right.
+    pub fn comment_move_right(&mut self) {
+        if self.comments.draft_cursor >= self.comments.draft.len() {
+            return;
+        }
+        if let Some(ch) = self.comments.draft[self.comments.draft_cursor..]
+            .chars()
+            .next()
+        {
+            self.comments.draft_cursor += ch.len_utf8();
+            self.mark_dirty();
+        }
+    }
+
+    /// Move the comment draft cursor to the start of the current line.
+    pub fn comment_move_line_start(&mut self) {
+        self.comments.draft_cursor = self.comments.draft[..self.comments.draft_cursor]
+            .rfind('\n')
+            .map_or(0, |idx| idx + 1);
+        self.mark_dirty();
+    }
+
+    /// Move the comment draft cursor to the end of the current line.
+    pub fn comment_move_line_end(&mut self) {
+        self.comments.draft_cursor = self.comments.draft[self.comments.draft_cursor..]
+            .find('\n')
+            .map_or(self.comments.draft.len(), |idx| {
+                self.comments.draft_cursor + idx
+            });
+        self.mark_dirty();
     }
 
     fn refresh_viewing_comments(&mut self) {

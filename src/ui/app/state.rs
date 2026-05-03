@@ -113,6 +113,8 @@ pub struct ViewerState {
 pub struct CommentsState {
     /// Draft comment text.
     pub draft: String,
+    /// Cursor byte position within the draft.
+    pub draft_cursor: usize,
     /// Comments being viewed.
     pub viewing: Vec<CommentViewItem>,
     /// Selected index in view.

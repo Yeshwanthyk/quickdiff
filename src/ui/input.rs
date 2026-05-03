@@ -221,14 +221,40 @@ fn handle_add_comment_key(app: &mut App, key: KeyEvent) -> bool {
             app.save_comment();
             true
         }
+        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.comment_insert_newline();
+            true
+        }
+        KeyCode::Left => {
+            app.comment_move_left();
+            true
+        }
+        KeyCode::Right => {
+            app.comment_move_right();
+            true
+        }
+        KeyCode::Home => {
+            app.comment_move_line_start();
+            true
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.comment_move_line_start();
+            true
+        }
+        KeyCode::End => {
+            app.comment_move_line_end();
+            true
+        }
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.comment_move_line_end();
+            true
+        }
         KeyCode::Backspace => {
-            app.comments.draft.pop();
-            app.mark_dirty();
+            app.comment_backspace();
             true
         }
         KeyCode::Char(c) => {
-            app.comments.draft.push(c);
-            app.mark_dirty();
+            app.comment_insert_char(c);
             true
         }
         _ => false,

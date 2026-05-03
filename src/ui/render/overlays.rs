@@ -14,6 +14,186 @@ use crate::ui::app::{App, PRActionType};
 
 use super::helpers::truncate_str;
 
+/// Render the add-comment editor overlay.
+pub fn render_add_comment_overlay(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let width = (area.width * 2 / 3).clamp(44, area.width.saturating_sub(4).max(1));
+    let height = 10.min(area.height.saturating_sub(4).max(1));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let overlay_area = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, overlay_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.accent))
+        .title(Span::styled(
+            " Comment ",
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(app.theme.bg_elevated));
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+    if inner.height == 0 {
+        return;
+    }
+
+    let hint = app
+        .diff
+        .as_ref()
+        .and_then(|diff| {
+            app.view_row_to_diff_row(app.viewer.scroll_y)
+                .and_then(|row| diff.hunk_at_row(row))
+        })
+        .and_then(|idx| app.diff.as_ref().and_then(|diff| diff.hunks().get(idx)))
+        .map(|hunk| {
+            format!(
+                "@@ -{},{} +{},{} @@",
+                hunk.old_range.0 + 1,
+                hunk.old_range.1,
+                hunk.new_range.0 + 1,
+                hunk.new_range.1
+            )
+        })
+        .unwrap_or_else(|| "Current hunk".to_string());
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            hint,
+            Style::default()
+                .fg(app.theme.text_muted)
+                .bg(app.theme.bg_elevated),
+        )))
+        .style(Style::default().bg(app.theme.bg_elevated)),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+
+    let editor_area = Rect::new(
+        inner.x + 1,
+        inner.y + 1,
+        inner.width.saturating_sub(2),
+        inner.height.saturating_sub(3),
+    );
+    let lines = comment_editor_lines(
+        &app.comments.draft,
+        app.comments.draft_cursor,
+        editor_area.width as usize,
+        editor_area.height as usize,
+        &app.theme,
+    );
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(app.theme.bg_elevated)),
+        editor_area,
+    );
+
+    let footer = Line::from(vec![
+        Span::styled(
+            "Enter",
+            Style::default()
+                .fg(app.theme.accent)
+                .bg(app.theme.bg_elevated),
+        ),
+        Span::styled(
+            " save  ",
+            Style::default()
+                .fg(app.theme.text_muted)
+                .bg(app.theme.bg_elevated),
+        ),
+        Span::styled(
+            "Ctrl-J",
+            Style::default()
+                .fg(app.theme.accent)
+                .bg(app.theme.bg_elevated),
+        ),
+        Span::styled(
+            " newline  ",
+            Style::default()
+                .fg(app.theme.text_muted)
+                .bg(app.theme.bg_elevated),
+        ),
+        Span::styled(
+            "Esc",
+            Style::default()
+                .fg(app.theme.accent)
+                .bg(app.theme.bg_elevated),
+        ),
+        Span::styled(
+            " cancel",
+            Style::default()
+                .fg(app.theme.text_muted)
+                .bg(app.theme.bg_elevated),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(footer).style(Style::default().bg(app.theme.bg_elevated)),
+        Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
+    );
+}
+
+fn comment_editor_lines(
+    body: &str,
+    cursor: usize,
+    width: usize,
+    height: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let is_placeholder = body.is_empty();
+    let body = if is_placeholder {
+        "Write a comment…"
+    } else {
+        body
+    };
+    let mut out = Vec::new();
+    let mut byte_pos = 0usize;
+    let mut cursor_drawn = false;
+    for raw in body.split('\n') {
+        let mut line_spans = Vec::new();
+        let mut chars = raw.chars().peekable();
+        let mut col = 0usize;
+        while col < width {
+            if byte_pos == cursor && !is_placeholder && !cursor_drawn {
+                let ch = chars.peek().copied().unwrap_or(' ');
+                line_spans.push(Span::styled(
+                    ch.to_string(),
+                    Style::default().fg(theme.bg_dark).bg(theme.accent),
+                ));
+                if chars.next().is_some() {
+                    byte_pos += ch.len_utf8();
+                }
+                cursor_drawn = true;
+            } else if let Some(ch) = chars.next() {
+                line_spans.push(Span::styled(
+                    ch.to_string(),
+                    Style::default()
+                        .fg(if is_placeholder {
+                            theme.text_muted
+                        } else {
+                            theme.text_normal
+                        })
+                        .bg(theme.bg_elevated),
+                ));
+                byte_pos += ch.len_utf8();
+            } else {
+                line_spans.push(Span::styled(" ", Style::default().bg(theme.bg_elevated)));
+            }
+            col += 1;
+        }
+        out.push(Line::from(line_spans));
+        byte_pos += 1;
+        if out.len() == height {
+            break;
+        }
+    }
+    while out.len() < height {
+        out.push(Line::from(Span::styled(
+            "",
+            Style::default().bg(theme.bg_elevated),
+        )));
+    }
+    out
+}
+
 /// Render the comments overlay.
 pub fn render_comments_overlay(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -25,8 +205,13 @@ pub fn render_comments_overlay(frame: &mut Frame, app: &App) {
 
     let max_overlay_height = area.height.saturating_sub(4).max(1);
     let min_overlay_height = 6.min(max_overlay_height);
-    let height =
-        (app.comments.viewing.len() as u16 + 4).clamp(min_overlay_height, max_overlay_height);
+    let desired_height = app
+        .comments
+        .viewing
+        .len()
+        .saturating_mul(2)
+        .saturating_add(2) as u16;
+    let height = desired_height.clamp(min_overlay_height, max_overlay_height);
 
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
@@ -70,11 +255,9 @@ pub fn render_comments_overlay(frame: &mut Frame, app: &App) {
     } else {
         let total = app.comments.viewing.len();
         let selected = app.comments.selected.min(total - 1);
-        let visible = inner.height as usize;
-
-        let scroll = (selected + 1).saturating_sub(visible);
-
-        let end = (scroll + visible).min(total);
+        let visible_items = ((inner.height as usize) / 2).max(1);
+        let scroll = (selected + 1).saturating_sub(visible_items);
+        let end = (scroll + visible_items).min(total);
 
         for idx in scroll..end {
             let item = &app.comments.viewing[idx];
@@ -124,16 +307,23 @@ pub fn render_comments_overlay(frame: &mut Frame, app: &App) {
                     Style::default().fg(app.theme.warning).bg(row_bg),
                 ));
             }
-            spans.push(Span::styled(
-                " - ",
-                Style::default().fg(app.theme.text_muted).bg(row_bg),
-            ));
-            spans.push(Span::styled(
-                item.message.as_str(),
-                Style::default().fg(msg_color).bg(row_bg),
-            ));
-
             lines.push(Line::from(spans));
+            if lines.len() < inner.height as usize {
+                let body_bg = app.theme.bg_elevated;
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        "  │ ",
+                        Style::default().fg(app.theme.text_muted).bg(body_bg),
+                    ),
+                    Span::styled(
+                        truncate_str(
+                            item.message.as_str(),
+                            inner.width.saturating_sub(4) as usize,
+                        ),
+                        Style::default().fg(msg_color).bg(body_bg),
+                    ),
+                ]));
+            }
         }
     }
 

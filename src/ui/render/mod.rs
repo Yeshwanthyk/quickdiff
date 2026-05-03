@@ -48,6 +48,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Overlays
     match app.ui.mode {
+        Mode::AddComment => overlays::render_add_comment_overlay(frame, app),
         Mode::ViewComments => overlays::render_comments_overlay(frame, app),
         Mode::SelectTheme => overlays::render_theme_selector(frame, app),
         Mode::Help => overlays::render_help_overlay(frame, app),
