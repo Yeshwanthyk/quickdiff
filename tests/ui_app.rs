@@ -468,6 +468,18 @@ fn focus_toggle_switches_modes() {
 }
 
 #[test]
+fn sidebar_toggle_hides_sidebar_and_focuses_diff() {
+    let harness = RepoHarness::new();
+    let mut app = harness.app();
+    assert!(app.sidebar.visible);
+    app.toggle_sidebar();
+    assert!(!app.sidebar.visible);
+    assert_eq!(app.focus, Focus::Diff);
+    app.toggle_sidebar();
+    assert!(app.sidebar.visible);
+}
+
+#[test]
 fn pane_fullscreen_toggles_cycle() {
     let harness = RepoHarness::new();
     let mut app = harness.app();

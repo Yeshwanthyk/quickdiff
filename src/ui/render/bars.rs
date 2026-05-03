@@ -294,6 +294,7 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("↵", "open"),
             ("/", "filter"),
             ("␣", "viewed"),
+            ("s", "hide"),
             ("T", "theme"),
             ("?", "help"),
             ("⇥", "diff"),
@@ -306,6 +307,14 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("n", "nums"),
             ("c", "comment"),
             ("C", "threads"),
+            (
+                "s",
+                if app.sidebar.visible {
+                    "hide files"
+                } else {
+                    "show files"
+                },
+            ),
             ("T", "theme"),
             ("?", "help"),
             ("⇥", "files"),

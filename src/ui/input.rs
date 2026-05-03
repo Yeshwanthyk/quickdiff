@@ -54,6 +54,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.toggle_viewed();
             return true;
         }
+        KeyCode::Char('s') => {
+            app.toggle_sidebar();
+            return true;
+        }
         KeyCode::Char('T') => {
             app.open_theme_selector();
             return true;
@@ -87,7 +91,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
     // Focus-specific keys
     match app.focus {
-        Focus::Sidebar => handle_sidebar_key(app, key),
+        Focus::Sidebar if app.sidebar.visible => handle_sidebar_key(app, key),
+        Focus::Sidebar => handle_diff_key(app, key),
         Focus::Diff => handle_diff_key(app, key),
     }
 }
@@ -382,7 +387,7 @@ fn handle_mouse(app: &mut App, event: MouseEvent) -> bool {
 
 /// Handle scroll wheel. Direction: negative = up, positive = down.
 fn handle_scroll(app: &mut App, delta: isize, x: u16) {
-    if x < SIDEBAR_WIDTH {
+    if app.sidebar.visible && x < SIDEBAR_WIDTH {
         // Scroll in sidebar - navigate files
         if delta < 0 {
             for _ in 0..(-delta) {
@@ -413,7 +418,7 @@ fn handle_click(app: &mut App, x: u16, y: u16) {
         return;
     }
 
-    if x < SIDEBAR_WIDTH {
+    if app.sidebar.visible && x < SIDEBAR_WIDTH {
         // Click in sidebar region -> focus sidebar
         app.set_focus(Focus::Sidebar);
 

@@ -2,6 +2,15 @@ use super::{App, Focus};
 use crate::core::ViewedStore;
 
 impl App {
+    /// Toggle sidebar visibility.
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar.visible = !self.sidebar.visible;
+        if !self.sidebar.visible {
+            self.focus = Focus::Diff;
+        }
+        self.ui.dirty = true;
+    }
+
     /// Move selection up in the sidebar list.
     pub fn select_prev(&mut self) {
         if self.sidebar.filtered_indices.is_empty() {

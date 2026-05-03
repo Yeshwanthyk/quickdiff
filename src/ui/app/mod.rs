@@ -243,7 +243,10 @@ impl App {
             comment_context,
             files,
             file_filter,
-            sidebar: SidebarState::default(),
+            sidebar: SidebarState {
+                visible: true,
+                ..Default::default()
+            },
             focus: Focus::Sidebar,
             viewed,
             viewed_in_changeset,

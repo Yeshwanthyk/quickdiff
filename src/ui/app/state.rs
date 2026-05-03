@@ -97,6 +97,8 @@ impl CommentIndex {
 /// Sidebar navigation and filter state.
 #[derive(Debug, Default)]
 pub struct SidebarState {
+    /// Whether the sidebar is visible.
+    pub visible: bool,
     /// Currently selected file index.
     pub selected_idx: usize,
     /// Scroll offset (first visible file).

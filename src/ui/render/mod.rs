@@ -59,6 +59,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_main(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    if !app.sidebar.visible {
+        diff::render_diff(frame, app, area);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
