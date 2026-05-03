@@ -8,9 +8,9 @@ use serde::Deserialize;
 use crate::core::{
     format_anchor_summary, list_changed_files, list_changed_files_between,
     list_changed_files_from_base_with_merge_base, list_commit_files, load_diff_contents,
-    resolve_revision, selector_from_hunk, Anchor, ChangedFile, CommentContext, CommentStatus,
-    CommentStore, DiffResult, DiffSource, FileCommentStore, RelPath, RepoError, RepoRoot, Selector,
-    TextBuffer,
+    resolve_revision, selector_from_hunk, Anchor, ChangeKind, ChangedFile, Comment, CommentContext,
+    CommentStatus, CommentStore, DiffResult, DiffSource, FileCommentStore, RelPath, RepoError,
+    RepoRoot, Selector, TextBuffer,
 };
 
 /// Run a comments subcommand.
@@ -24,6 +24,7 @@ pub fn run_comments_command(repo: &RepoRoot, args: &[String]) -> ExitCode {
         eprintln!(
             "  import --json <file> [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>]"
         );
+        eprintln!("  next [--json] [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>]");
         eprintln!("  resolve <id>");
         return ExitCode::from(1);
     }
@@ -35,6 +36,7 @@ pub fn run_comments_command(repo: &RepoRoot, args: &[String]) -> ExitCode {
         "list" => cmd_list(repo, cmd_args),
         "add" => cmd_add(repo, cmd_args),
         "import" => cmd_import(repo, cmd_args),
+        "next" => cmd_next(repo, cmd_args),
         "resolve" => cmd_resolve(repo, cmd_args),
         _ => {
             eprintln!("Unknown command: {}", cmd);
@@ -331,6 +333,39 @@ fn cmd_list(repo: &RepoRoot, args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[derive(Debug, serde::Serialize)]
+struct NextComment<'a> {
+    id: u64,
+    path: &'a str,
+    context: &'a CommentContext,
+    context_summary: String,
+    status: CommentStatus,
+    message: &'a str,
+    anchor: &'a Anchor,
+    anchor_summary: String,
+    hunk_digest: &'a str,
+    hunk_index: usize,
+    hunk: NextHunkContext,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct NextHunkContext {
+    header: String,
+    old_start: usize,
+    old_count: usize,
+    new_start: usize,
+    new_count: usize,
+    lines: Vec<NextHunkLine>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct NextHunkLine {
+    kind: &'static str,
+    old: Option<usize>,
+    new: Option<usize>,
+    text: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct ImportComment {
     path: String,
@@ -348,6 +383,61 @@ struct ImportRejected {
 struct ImportReport {
     accepted: usize,
     rejected: Vec<ImportRejected>,
+}
+
+fn comment_hunk_digest(comment: &Comment) -> Option<&str> {
+    comment
+        .anchor
+        .selectors
+        .first()
+        .map(|selector| match selector {
+            Selector::DiffHunkV1(hunk) => hunk.digest_hex.as_str(),
+        })
+}
+
+fn build_hunk_context(diff: &DiffResult, hunk_index: usize) -> Option<NextHunkContext> {
+    let hunk = diff.hunks().get(hunk_index)?;
+    let rows = diff
+        .rows()
+        .get(hunk.start_row..hunk.start_row + hunk.row_count)?;
+    let lines = rows
+        .iter()
+        .map(|row| {
+            let kind = match row.kind {
+                ChangeKind::Equal => "context",
+                ChangeKind::Delete => "delete",
+                ChangeKind::Insert => "insert",
+                ChangeKind::Replace => "replace",
+            };
+            let text = row
+                .new
+                .as_ref()
+                .or(row.old.as_ref())
+                .map(|line| line.content.clone())
+                .unwrap_or_default();
+            NextHunkLine {
+                kind,
+                old: row.old.as_ref().map(|line| line.line_num + 1),
+                new: row.new.as_ref().map(|line| line.line_num + 1),
+                text,
+            }
+        })
+        .collect();
+
+    Some(NextHunkContext {
+        header: format!(
+            "@@ -{},{} +{},{} @@",
+            hunk.old_range.0 + 1,
+            hunk.old_range.1,
+            hunk.new_range.0 + 1,
+            hunk.new_range.1
+        ),
+        old_start: hunk.old_range.0 + 1,
+        old_count: hunk.old_range.1,
+        new_start: hunk.new_range.0 + 1,
+        new_count: hunk.new_range.1,
+        lines,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -753,6 +843,131 @@ fn cmd_import(repo: &RepoRoot, args: &[String]) -> ExitCode {
     } else {
         ExitCode::from(2)
     }
+}
+
+fn cmd_next(repo: &RepoRoot, args: &[String]) -> ExitCode {
+    let mut json_output = false;
+    for arg in args {
+        if arg == "--json" {
+            json_output = true;
+        }
+    }
+
+    let (context, source) = match parse_context(repo, args) {
+        Ok(Some(v)) => v,
+        Ok(None) => (CommentContext::Worktree, DiffSource::WorkingTree),
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let store = match FileCommentStore::open(repo) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to open comment store: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let Some(comment) = store
+        .list(false)
+        .into_iter()
+        .filter(|comment| comment.context.matches(&context))
+        .min_by_key(|comment| comment.id)
+    else {
+        if json_output {
+            println!("null");
+        } else {
+            println!("No open comments");
+        }
+        return ExitCode::from(2);
+    };
+
+    let Some(hunk_digest) = comment_hunk_digest(comment) else {
+        eprintln!("Comment {} has no diff hunk selector", comment.id);
+        return ExitCode::from(1);
+    };
+
+    let (files, merge_base) = match list_files_for_source(repo, &source) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Failed to list files for source: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let Some(file) = files.iter().find(|file| file.path == comment.path) else {
+        eprintln!(
+            "Comment {} is stale: {} is not part of the current changeset ({})",
+            comment.id,
+            comment.path.as_str(),
+            context_summary(&context)
+        );
+        return ExitCode::from(3);
+    };
+
+    let (old_bytes, new_bytes) =
+        match load_diff_contents(repo, &source, file, merge_base.as_deref()) {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!("Failed to load diff content: {}", e);
+                return ExitCode::from(1);
+            }
+        };
+    let diff = DiffResult::compute(&TextBuffer::new(&old_bytes), &TextBuffer::new(&new_bytes));
+    let Some((hunk_index, _)) = diff
+        .hunks()
+        .iter()
+        .enumerate()
+        .find(|(_, hunk)| hunk.digest_hex == hunk_digest)
+    else {
+        eprintln!(
+            "Comment {} is stale: hunk digest {} was not found in {}",
+            comment.id,
+            hunk_digest,
+            comment.path.as_str()
+        );
+        return ExitCode::from(3);
+    };
+
+    let Some(hunk) = build_hunk_context(&diff, hunk_index) else {
+        eprintln!("Failed to build hunk context for comment {}", comment.id);
+        return ExitCode::from(1);
+    };
+
+    if json_output {
+        let payload = NextComment {
+            id: comment.id,
+            path: comment.path.as_str(),
+            context: &comment.context,
+            context_summary: context_summary(&comment.context),
+            status: comment.status,
+            message: &comment.message,
+            anchor: &comment.anchor,
+            anchor_summary: format_anchor_summary(&comment.anchor),
+            hunk_digest,
+            hunk_index,
+            hunk,
+        };
+        match serde_json::to_string_pretty(&payload) {
+            Ok(output) => println!("{}", output),
+            Err(e) => {
+                eprintln!("JSON serialization error: {}", e);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        println!(
+            "[{}] {} - {}",
+            comment.id,
+            comment.path.as_str(),
+            comment.message
+        );
+        println!("    {}", format_anchor_summary(&comment.anchor));
+    }
+
+    ExitCode::SUCCESS
 }
 
 /// Resolve a comment.
