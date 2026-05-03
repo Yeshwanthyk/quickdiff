@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::core::{ChangeKind, InlineSpan};
+use crate::core::{ChangeKind, FileChangeKind, InlineSpan};
 use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId, StyledSpan};
 use crate::ui::app::{App, DiffPaneMode, Focus};
 
@@ -31,7 +31,8 @@ pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         app.theme_styles.text_muted
     };
 
-    let title = match app.viewer.pane_mode {
+    let effective_mode = effective_pane_mode(app, area.width);
+    let title = match effective_mode {
         DiffPaneMode::Both => " Diff ",
         DiffPaneMode::OldOnly => " Diff (old only) ",
         DiffPaneMode::NewOnly => " Diff (new only) ",
@@ -98,7 +99,7 @@ pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    match app.viewer.pane_mode {
+    match effective_mode {
         DiffPaneMode::Both => {
             let panes = Layout::default()
                 .direction(Direction::Horizontal)
@@ -138,10 +139,13 @@ fn render_diff_header(frame: &mut Frame, app: &App, area: Rect) {
     let hunk_text = app
         .current_hunk_info()
         .map(|(current, total)| format!("hunk {}/{}", current, total));
-    let mode_text = match app.viewer.pane_mode {
-        DiffPaneMode::Both => "split",
-        DiffPaneMode::OldOnly => "old",
-        DiffPaneMode::NewOnly => "new",
+    let effective_mode = effective_pane_mode(app, area.width);
+    let mode_text = match (app.viewer.pane_mode, effective_mode) {
+        (DiffPaneMode::Both, DiffPaneMode::OldOnly) => "auto old",
+        (DiffPaneMode::Both, DiffPaneMode::NewOnly) => "auto new",
+        (_, DiffPaneMode::Both) => "split",
+        (_, DiffPaneMode::OldOnly) => "old",
+        (_, DiffPaneMode::NewOnly) => "new",
     };
     let view_text = match app.viewer.view_mode {
         crate::ui::app::DiffViewMode::HunksOnly => "hunks",
@@ -230,6 +234,19 @@ fn render_state_card(frame: &mut Frame, app: &App, area: Rect, title: &str, hint
     let y = area.y + area.height.saturating_sub(2) / 2;
     let card_area = Rect::new(area.x, y, area.width, 2.min(area.height));
     frame.render_widget(para, card_area);
+}
+
+const MIN_SPLIT_DIFF_WIDTH: u16 = 72;
+
+fn effective_pane_mode(app: &App, width: u16) -> DiffPaneMode {
+    if app.viewer.pane_mode != DiffPaneMode::Both || width >= MIN_SPLIT_DIFF_WIDTH {
+        return app.viewer.pane_mode;
+    }
+
+    match app.selected_file().map(|file| file.kind) {
+        Some(FileChangeKind::Deleted) => DiffPaneMode::OldOnly,
+        _ => DiffPaneMode::NewOnly,
+    }
 }
 
 /// Render vertical divider between old/new panes.
