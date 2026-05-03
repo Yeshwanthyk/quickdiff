@@ -1,11 +1,8 @@
-use std::collections::HashMap;
 use std::sync::mpsc::TrySendError;
 
 use super::super::worker::{DiffLoadRequest, DiffLoadResponse};
 use super::{App, DiffPaneMode, DiffSource, DiffViewMode};
-use crate::core::{
-    digest_hunk_changed_rows, CommentStore, DiffResult, FileCommentStore, RenderRow, Selector,
-};
+use crate::core::{CommentStore, DiffResult, FileCommentStore, RenderRow, Selector};
 use crate::highlight::{query_scopes, LanguageId};
 use crate::ui::windowing::visible_range;
 
@@ -224,11 +221,13 @@ impl App {
 
     pub(crate) fn refresh_current_file_comment_markers(&mut self) {
         self.commented_hunks.clear();
+        self.comment_index.by_hunk.clear();
+        self.comment_index.by_digest.clear();
 
         let Some(diff) = &self.diff else {
             return;
         };
-        let Some(file) = self.selected_file() else {
+        let Some(path) = self.selected_file().map(|file| file.path.clone()) else {
             return;
         };
 
@@ -236,14 +235,15 @@ impl App {
             return;
         };
 
-        let comments = store.list_for_path(&file.path, false);
-        if comments.is_empty() {
-            return;
+        for (idx, hunk) in diff.hunks().iter().enumerate() {
+            self.comment_index
+                .by_digest
+                .insert(hunk.digest_hex.clone(), idx);
         }
 
-        let mut digest_to_hunk_idx = HashMap::new();
-        for (idx, h) in diff.hunks().iter().enumerate() {
-            digest_to_hunk_idx.insert(digest_hunk_changed_rows(diff, h), idx);
+        let comments = store.list_for_path(&path, false);
+        if comments.is_empty() {
+            return;
         }
 
         for c in comments {
@@ -254,8 +254,13 @@ impl App {
             for sel in &c.anchor.selectors {
                 match sel {
                     Selector::DiffHunkV1(h) => {
-                        if let Some(idx) = digest_to_hunk_idx.get(&h.digest_hex) {
-                            self.commented_hunks.insert(*idx);
+                        if let Some(&idx) = self.comment_index.by_digest.get(&h.digest_hex) {
+                            self.commented_hunks.insert(idx);
+                            self.comment_index
+                                .by_hunk
+                                .entry(idx)
+                                .or_default()
+                                .push(c.id);
                         }
                     }
                 }

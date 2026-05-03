@@ -411,7 +411,7 @@ fn render_diff_pane(frame: &mut Frame, app: &App, area: Rect, is_old: bool) {
         let has_comment = app.is_worktree_mode()
             && diff
                 .hunk_at_row(row_idx)
-                .is_some_and(|h| app.commented_hunks.contains(&h));
+                .is_some_and(|h| app.comment_index.has_open_comment(h));
         let (line_ref, bg_color, inline_bg, bg_style) = if is_old {
             match (&row.old, row.kind) {
                 (Some(line), ChangeKind::Equal) => (

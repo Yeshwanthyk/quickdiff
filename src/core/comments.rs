@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::{ChangeKind, DiffResult, Hunk, RelPath};
+use crate::core::{DiffResult, Hunk, RelPath};
 
 /// Comment identifier.
 pub type CommentId = u64;
@@ -112,11 +112,10 @@ pub struct DiffHunkSelectorV1 {
 /// Build a selector from a hunk in a diff.
 pub fn selector_from_hunk(diff: &DiffResult, hunk_idx: usize) -> Option<DiffHunkSelectorV1> {
     let hunk = diff.hunks().get(hunk_idx)?;
-    let digest = digest_hunk_changed_rows(diff, hunk);
     Some(DiffHunkSelectorV1 {
         old_range: hunk.old_range,
         new_range: hunk.new_range,
-        digest_hex: digest,
+        digest_hex: hunk.digest_hex.clone(),
     })
 }
 
@@ -124,42 +123,8 @@ pub fn selector_from_hunk(diff: &DiffResult, hunk_idx: usize) -> Option<DiffHunk
 /// Feeds `-<old_line>\n` for deletions/replaces (old side)
 /// and `+<new_line>\n` for insertions/replaces (new side).
 pub fn digest_hunk_changed_rows(diff: &DiffResult, hunk: &Hunk) -> String {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-
-    let mut hash = FNV_OFFSET;
-
-    let start = hunk.start_row;
-    let end = start + hunk.row_count;
-
-    for row in diff.rows().iter().skip(start).take(end - start) {
-        match row.kind {
-            ChangeKind::Delete | ChangeKind::Replace => {
-                if let Some(ref old) = row.old {
-                    // Feed "-<content>\n"
-                    for byte in b"-".iter().chain(old.content.as_bytes()).chain(b"\n") {
-                        hash ^= *byte as u64;
-                        hash = hash.wrapping_mul(FNV_PRIME);
-                    }
-                }
-            }
-            _ => {}
-        }
-        match row.kind {
-            ChangeKind::Insert | ChangeKind::Replace => {
-                if let Some(ref new) = row.new {
-                    // Feed "+<content>\n"
-                    for byte in b"+".iter().chain(new.content.as_bytes()).chain(b"\n") {
-                        hash ^= *byte as u64;
-                        hash = hash.wrapping_mul(FNV_PRIME);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    format!("{:016x}", hash)
+    let _ = diff;
+    hunk.digest_hex.clone()
 }
 
 /// Format an anchor into a human-friendly single-line summary.
@@ -230,7 +195,7 @@ mod tests {
     fn context_unscoped_matches_all() {
         assert!(CommentContext::Unscoped.matches(&CommentContext::Worktree));
         assert!(CommentContext::Unscoped.matches(&CommentContext::Base {
-            base: "origin/main".to_string(),
+            base: "origin/main".to_string()
         }));
     }
 
@@ -238,7 +203,7 @@ mod tests {
     fn context_scoped_matches_exact() {
         assert!(CommentContext::Worktree.matches(&CommentContext::Worktree));
         assert!(!CommentContext::Worktree.matches(&CommentContext::Base {
-            base: "origin/main".to_string(),
+            base: "origin/main".to_string()
         }));
     }
 

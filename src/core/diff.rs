@@ -64,6 +64,8 @@ pub struct Hunk {
     pub old_range: (usize, usize),
     /// New file line range (start, count).
     pub new_range: (usize, usize),
+    /// Stable digest of changed rows in this hunk.
+    pub digest_hex: String,
 }
 
 /// Complete diff result between two text buffers.
@@ -114,6 +116,12 @@ impl DiffResult {
     #[must_use]
     pub fn hunks(&self) -> &[Hunk] {
         &self.hunks
+    }
+
+    /// Get the stable changed-row digest for a hunk.
+    #[must_use]
+    pub fn hunk_digest(&self, hunk_idx: usize) -> Option<&str> {
+        self.hunks.get(hunk_idx).map(|h| h.digest_hex.as_str())
     }
 
     /// Total number of render rows.
@@ -304,21 +312,14 @@ fn collect_change_run(
     deletes: &mut Vec<(usize, String)>,
     inserts: &mut Vec<(usize, String)>,
 ) {
-    while let Some(next) = iter.peek() {
-        match next {
-            Change::Delete { .. } => {
-                let Some(Change::Delete { old_line, content }) = iter.next() else {
-                    unreachable!();
-                };
-                deletes.push((old_line, content));
-            }
-            Change::Insert { .. } => {
-                let Some(Change::Insert { new_line, content }) = iter.next() else {
-                    unreachable!();
-                };
-                inserts.push((new_line, content));
-            }
-            Change::Equal { .. } => break,
+    while matches!(
+        iter.peek(),
+        Some(Change::Delete { .. } | Change::Insert { .. })
+    ) {
+        match iter.next() {
+            Some(Change::Delete { old_line, content }) => deletes.push((old_line, content)),
+            Some(Change::Insert { new_line, content }) => inserts.push((new_line, content)),
+            Some(Change::Equal { .. }) | None => break,
         }
     }
 }
@@ -567,7 +568,41 @@ fn make_hunk(rows: &[RenderRow], start: usize, end: usize) -> Hunk {
         row_count: end - start,
         old_range,
         new_range,
+        digest_hex: digest_changed_rows(slice),
     }
+}
+
+fn digest_changed_rows(rows: &[RenderRow]) -> String {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash = FNV_OFFSET;
+    for row in rows {
+        match row.kind {
+            ChangeKind::Delete | ChangeKind::Replace => {
+                if let Some(ref old) = row.old {
+                    for byte in b"-".iter().chain(old.content.as_bytes()).chain(b"\n") {
+                        hash ^= *byte as u64;
+                        hash = hash.wrapping_mul(FNV_PRIME);
+                    }
+                }
+            }
+            _ => {}
+        }
+        match row.kind {
+            ChangeKind::Insert | ChangeKind::Replace => {
+                if let Some(ref new) = row.new {
+                    for byte in b"+".iter().chain(new.content.as_bytes()).chain(b"\n") {
+                        hash ^= *byte as u64;
+                        hash = hash.wrapping_mul(FNV_PRIME);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    format!("{:016x}", hash)
 }
 
 #[cfg(test)]

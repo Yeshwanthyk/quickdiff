@@ -27,8 +27,8 @@ mod watcher;
 mod worker_state;
 
 pub use state::{
-    CommentViewItem, CommentsState, DiffPaneMode, DiffViewMode, Focus, Mode, PRActionType,
-    PatchState, PrState, SidebarState, UiState, ViewerState,
+    CommentIndex, CommentViewItem, CommentsState, DiffPaneMode, DiffViewMode, Focus, Mode,
+    PRActionType, PatchState, PrState, SidebarState, UiState, ViewerState,
 };
 use worker_state::WorkerState;
 
@@ -58,6 +58,8 @@ pub struct App {
     pub open_comment_counts: HashMap<RelPath, usize>,
     /// Hunks (by index) that have open comments in this context for the selected file.
     pub commented_hunks: HashSet<usize>,
+    /// Per-file projection of comments onto current diff hunks.
+    pub comment_index: CommentIndex,
     /// Should the app quit?
     pub should_quit: bool,
 
@@ -247,6 +249,7 @@ impl App {
             viewed_in_changeset,
             open_comment_counts,
             commented_hunks: HashSet::new(),
+            comment_index: CommentIndex::default(),
             should_quit: false,
             worker,
             diff: None,

@@ -1,4 +1,6 @@
-use crate::core::{CommentStatus, PRChangedFile, PRFilter, PullRequest};
+use std::collections::HashMap;
+
+use crate::core::{CommentId, CommentStatus, PRChangedFile, PRFilter, PullRequest};
 
 /// Focus state for the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,12 +68,30 @@ pub enum DiffViewMode {
 
 #[derive(Debug, Clone)]
 pub struct CommentViewItem {
-    pub id: u64,
+    pub id: CommentId,
     pub status: CommentStatus,
     pub message: String,
     pub anchor_summary: String,
     pub hunk_start_row: Option<usize>,
     pub stale: bool,
+}
+
+/// Per-file projection of comments onto current diff hunks.
+#[derive(Debug, Default)]
+pub struct CommentIndex {
+    /// Open comment IDs by hunk index.
+    pub by_hunk: HashMap<usize, Vec<CommentId>>,
+    /// Current hunk index by hunk digest.
+    pub by_digest: HashMap<String, usize>,
+}
+
+impl CommentIndex {
+    /// Whether a hunk has at least one open comment.
+    pub fn has_open_comment(&self, hunk_idx: usize) -> bool {
+        self.by_hunk
+            .get(&hunk_idx)
+            .is_some_and(|comments| !comments.is_empty())
+    }
 }
 
 /// Sidebar navigation and filter state.

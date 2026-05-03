@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use super::{App, CommentViewItem, Focus, Mode};
 use crate::core::{
-    digest_hunk_changed_rows, format_anchor_summary, selector_from_hunk, Anchor, CommentStatus,
-    CommentStore, FileCommentStore, Selector,
+    format_anchor_summary, selector_from_hunk, Anchor, CommentStatus, CommentStore,
+    FileCommentStore, Selector,
 };
 
 impl App {
@@ -234,7 +234,7 @@ impl App {
         let mut digest_to_start_row: HashMap<String, usize> = HashMap::new();
         if let Some(diff) = &self.diff {
             for h in diff.hunks() {
-                digest_to_start_row.insert(digest_hunk_changed_rows(diff, h), h.start_row);
+                digest_to_start_row.insert(h.digest_hex.clone(), h.start_row);
             }
         }
 
