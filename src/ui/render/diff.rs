@@ -1,7 +1,7 @@
 //! Diff pane rendering.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -14,7 +14,7 @@ use crate::ui::app::{App, DiffPaneMode, Focus};
 
 use super::helpers::{
     boost_muted_fg, gutter_width, line_number_width, sanitize_char, spaces, style_to_color,
-    visible_tab_spaces, SpanBuilder, ThemeStyles,
+    truncate_str, visible_tab_spaces, SpanBuilder, ThemeStyles,
 };
 
 /// Render the diff view.
@@ -46,29 +46,55 @@ pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+    render_diff_header(frame, app, chunks[0]);
+    let content = chunks[1];
+
     // Handle empty states
     if app.diff_loading() {
-        let msg = Paragraph::new("Loading diff…").style(app.theme_styles.text_muted);
-        frame.render_widget(msg, inner);
+        render_state_card(
+            frame,
+            app,
+            content,
+            "Loading diff…",
+            "Preparing file contents",
+        );
         return;
     }
 
     if app.is_binary {
-        let msg =
-            Paragraph::new("Binary file — cannot display diff").style(app.theme_styles.text_muted);
-        frame.render_widget(msg, inner);
+        render_state_card(
+            frame,
+            app,
+            content,
+            "Binary file",
+            "quickdiff cannot display binary contents",
+        );
         return;
     }
 
     let Some(diff) = &app.diff else {
-        let msg = Paragraph::new("No diff to display").style(app.theme_styles.text_muted);
-        frame.render_widget(msg, inner);
+        render_state_card(
+            frame,
+            app,
+            content,
+            "No diff selected",
+            "Choose a file from the sidebar",
+        );
         return;
     };
 
     if diff.rows().is_empty() || !diff.has_changes() {
-        let msg = Paragraph::new("Files are identical").style(app.theme_styles.text_muted);
-        frame.render_widget(msg, inner);
+        render_state_card(
+            frame,
+            app,
+            content,
+            "Files are identical",
+            "No changed rows to display",
+        );
         return;
     }
 
@@ -81,18 +107,129 @@ pub fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
                     Constraint::Length(1),
                     Constraint::Percentage(50),
                 ])
-                .split(inner);
+                .split(content);
             render_diff_pane(frame, app, panes[0], true);
             render_pane_divider(frame, panes[1], &app.theme_styles);
             render_diff_pane(frame, app, panes[2], false);
         }
         DiffPaneMode::OldOnly => {
-            render_diff_pane(frame, app, inner, true);
+            render_diff_pane(frame, app, content, true);
         }
         DiffPaneMode::NewOnly => {
-            render_diff_pane(frame, app, inner, false);
+            render_diff_pane(frame, app, content, false);
         }
     }
+}
+
+fn render_diff_header(frame: &mut Frame, app: &App, area: Rect) {
+    if area.height == 0 {
+        return;
+    }
+
+    let file = app.selected_file();
+    let name = file.map(|f| f.path.as_str()).unwrap_or("No file selected");
+    let kind = file.map(|f| match f.kind {
+        crate::core::FileChangeKind::Added => ("A", app.theme.success),
+        crate::core::FileChangeKind::Modified => ("M", app.theme.warning),
+        crate::core::FileChangeKind::Deleted => ("D", app.theme.error),
+        crate::core::FileChangeKind::Untracked => ("?", app.theme.text_muted),
+        crate::core::FileChangeKind::Renamed => ("R", app.theme.accent_dim),
+    });
+    let hunk_text = app
+        .current_hunk_info()
+        .map(|(current, total)| format!("hunk {}/{}", current, total));
+    let mode_text = match app.viewer.pane_mode {
+        DiffPaneMode::Both => "split",
+        DiffPaneMode::OldOnly => "old",
+        DiffPaneMode::NewOnly => "new",
+    };
+    let view_text = match app.viewer.view_mode {
+        crate::ui::app::DiffViewMode::HunksOnly => "hunks",
+        crate::ui::app::DiffViewMode::FullFile => "full",
+    };
+    let right = [
+        hunk_text.as_deref(),
+        Some(view_text),
+        Some(mode_text),
+        Some(if app.viewer.wrap_lines {
+            "wrap"
+        } else {
+            "nowrap"
+        }),
+        Some(if app.viewer.show_line_numbers {
+            "nums"
+        } else {
+            "nonums"
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("  ");
+
+    let mut spans = Vec::new();
+    spans.push(Span::styled(" ", app.theme_styles.bg_elevated));
+    if let Some((label, color)) = kind {
+        spans.push(Span::styled(
+            format!(" {} ", label),
+            Style::default()
+                .fg(app.theme.bg_dark)
+                .bg(color)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(" ", app.theme_styles.bg_elevated));
+    }
+
+    let width = area.width as usize;
+    let reserved = right.chars().count()
+        + spans
+            .iter()
+            .map(|s| s.content.chars().count())
+            .sum::<usize>()
+        + 3;
+    let name_width = width.saturating_sub(reserved).max(1);
+    let display_name = truncate_str(name, name_width);
+    spans.push(Span::styled(
+        display_name,
+        app.theme_styles
+            .text_bright
+            .bg(app.theme.bg_elevated)
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    let left_len = spans
+        .iter()
+        .map(|s| s.content.chars().count())
+        .sum::<usize>();
+    let right_len = right.chars().count();
+    let padding = width.saturating_sub(left_len).saturating_sub(right_len + 1);
+    spans.push(Span::styled(spaces(padding), app.theme_styles.bg_elevated));
+    if !right.is_empty() {
+        spans.push(Span::styled(
+            right,
+            app.theme_styles.text_muted.bg(app.theme.bg_elevated),
+        ));
+        spans.push(Span::styled(" ", app.theme_styles.bg_elevated));
+    }
+
+    let para = Paragraph::new(Line::from(spans)).style(app.theme_styles.bg_elevated);
+    frame.render_widget(para, area);
+}
+
+fn render_state_card(frame: &mut Frame, app: &App, area: Rect, title: &str, hint: &str) {
+    let text = vec![
+        Line::from(Span::styled(
+            title.to_string(),
+            app.theme_styles.text_bright.add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(hint.to_string(), app.theme_styles.text_muted)),
+    ];
+    let para = Paragraph::new(text)
+        .alignment(Alignment::Center)
+        .style(app.theme_styles.bg_dark);
+    let y = area.y + area.height.saturating_sub(2) / 2;
+    let card_area = Rect::new(area.x, y, area.width, 2.min(area.height));
+    frame.render_widget(para, card_area);
 }
 
 /// Render vertical divider between old/new panes.

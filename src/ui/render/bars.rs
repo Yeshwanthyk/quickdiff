@@ -153,39 +153,6 @@ pub fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Render the bottom bar with mode-specific hints.
 pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
-    // Input mode
-    if app.ui.mode == Mode::AddComment {
-        let line = Line::from(vec![
-            Span::styled(
-                " Comment: ",
-                Style::default()
-                    .fg(app.theme.accent)
-                    .bg(app.theme.bg_elevated),
-            ),
-            Span::styled(
-                &app.comments.draft,
-                Style::default()
-                    .fg(app.theme.text_bright)
-                    .bg(app.theme.bg_elevated),
-            ),
-            Span::styled(
-                "█",
-                Style::default()
-                    .fg(app.theme.accent)
-                    .bg(app.theme.bg_elevated),
-            ),
-            Span::styled(
-                "  Enter: save  Esc: cancel",
-                Style::default()
-                    .fg(app.theme.text_muted)
-                    .bg(app.theme.bg_elevated),
-            ),
-        ]);
-        let para = Paragraph::new(line).style(Style::default().bg(app.theme.bg_elevated));
-        frame.render_widget(para, area);
-        return;
-    }
-
     // Filter mode
     if app.ui.mode == Mode::FilterFiles {
         let match_count = if app.sidebar.filter.is_empty() {
@@ -326,19 +293,22 @@ pub fn render_bottom_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("j/k", "navigate"),
             ("↵", "open"),
             ("/", "filter"),
-            ("␣", "view+next"),
-            ("⇥", "switch"),
+            ("␣", "viewed"),
+            ("T", "theme"),
+            ("?", "help"),
+            ("⇥", "diff"),
         ],
         Focus::Diff => &[
             ("j/k", "scroll"),
-            ("{/}", "hunks"),
-            ("z", "fold"),
+            ("{/}", "hunk"),
+            ("z", "hunks/full"),
             ("w", "wrap"),
             ("n", "nums"),
             ("c", "comment"),
-            ("C", "view"),
-            ("␣", "view+next"),
-            ("⇥", "switch"),
+            ("C", "threads"),
+            ("T", "theme"),
+            ("?", "help"),
+            ("⇥", "files"),
         ],
     };
 
