@@ -3,7 +3,7 @@ use std::sync::mpsc::TrySendError;
 use super::super::worker::{DiffLoadRequest, DiffLoadResponse};
 use super::{App, DiffPaneMode, DiffSource, DiffViewMode};
 use crate::core::{CommentStore, DiffResult, FileCommentStore, RenderRow, Selector};
-use crate::highlight::{query_scopes, LanguageId};
+use crate::highlight::{LanguageId, query_scopes};
 use crate::ui::windowing::visible_range;
 
 impl App {
@@ -168,12 +168,11 @@ impl App {
 
                     self.rebuild_view_rows();
                     self.viewer.scroll_y = 0;
-                    if let Some(diff) = self.diff.as_ref() {
-                        if let Some(first) = diff.hunks().first() {
-                            if let Some(view_row) = self.diff_row_to_view_row(first.start_row) {
-                                self.viewer.scroll_y = view_row;
-                            }
-                        }
+                    if let Some(diff) = self.diff.as_ref()
+                        && let Some(first) = diff.hunks().first()
+                        && let Some(view_row) = self.diff_row_to_view_row(first.start_row)
+                    {
+                        self.viewer.scroll_y = view_row;
                     }
 
                     if !is_binary {
@@ -432,11 +431,11 @@ impl App {
             return;
         };
 
-        if let Some(row) = diff.next_hunk_row(current_row) {
-            if let Some(view_row) = self.diff_row_to_view_row(row) {
-                self.viewer.scroll_y = view_row;
-                self.ui.dirty = true;
-            }
+        if let Some(row) = diff.next_hunk_row(current_row)
+            && let Some(view_row) = self.diff_row_to_view_row(row)
+        {
+            self.viewer.scroll_y = view_row;
+            self.ui.dirty = true;
         }
     }
 
@@ -449,11 +448,11 @@ impl App {
             return;
         };
 
-        if let Some(row) = diff.prev_hunk_row(current_row) {
-            if let Some(view_row) = self.diff_row_to_view_row(row) {
-                self.viewer.scroll_y = view_row;
-                self.ui.dirty = true;
-            }
+        if let Some(row) = diff.prev_hunk_row(current_row)
+            && let Some(view_row) = self.diff_row_to_view_row(row)
+        {
+            self.viewer.scroll_y = view_row;
+            self.ui.dirty = true;
         }
     }
 

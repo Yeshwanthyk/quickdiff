@@ -6,11 +6,11 @@ use std::process::ExitCode;
 use serde::Deserialize;
 
 use crate::core::{
+    Anchor, ChangeKind, ChangedFile, Comment, CommentContext, CommentStatus, CommentStore,
+    DiffResult, DiffSource, FileCommentStore, RelPath, RepoError, RepoRoot, Selector, TextBuffer,
     format_anchor_summary, list_changed_files, list_changed_files_between,
     list_changed_files_from_base_with_merge_base, list_commit_files, load_diff_contents,
-    resolve_revision, selector_from_hunk, Anchor, ChangeKind, ChangedFile, Comment, CommentContext,
-    CommentStatus, CommentStore, DiffResult, DiffSource, FileCommentStore, RelPath, RepoError,
-    RepoRoot, Selector, TextBuffer,
+    resolve_revision, selector_from_hunk,
 };
 
 /// Run a comments subcommand.
@@ -19,8 +19,12 @@ pub fn run_comments_command(repo: &RepoRoot, args: &[String]) -> ExitCode {
     if args.is_empty() {
         eprintln!("Usage: quickdiff comments <command>");
         eprintln!("Commands:");
-        eprintln!("  list [--all] [--json] [--path <path>] [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>]");
-        eprintln!("  add  [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>] --path <path> (--hunk <n>|--old-line <n>|--new-line <n>) --message <text>");
+        eprintln!(
+            "  list [--all] [--json] [--path <path>] [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>]"
+        );
+        eprintln!(
+            "  add  [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>] --path <path> (--hunk <n>|--old-line <n>|--new-line <n>) --message <text>"
+        );
         eprintln!(
             "  import --json <file> [--worktree|--base <ref>|--commit <rev>|--range <from>..<to>]"
         );

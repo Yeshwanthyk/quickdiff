@@ -1,20 +1,20 @@
 //! Diff pane rendering.
 
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use crate::core::{ChangeKind, FileChangeKind, InlineSpan};
-use crate::highlight::{find_enclosing_scope, ScopeInfo, StyleId, StyledSpan};
+use crate::highlight::{ScopeInfo, StyleId, StyledSpan, find_enclosing_scope};
 use crate::ui::app::{App, DiffPaneMode, Focus};
 
 use super::helpers::{
-    boost_muted_fg, gutter_width, line_number_width, sanitize_char, spaces, style_to_color,
-    truncate_str, visible_tab_spaces, SpanBuilder, ThemeStyles,
+    SpanBuilder, ThemeStyles, boost_muted_fg, gutter_width, line_number_width, sanitize_char,
+    spaces, style_to_color, truncate_str, visible_tab_spaces,
 };
 
 /// Render the diff view.

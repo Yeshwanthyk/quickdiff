@@ -9,8 +9,8 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::core::{
-    diff_source_display, get_pr_diff, list_changed_files, parse_unified_diff, DiffSource,
-    FileChangeKind, RepoRoot,
+    DiffSource, FileChangeKind, RepoRoot, diff_source_display, get_pr_diff, list_changed_files,
+    parse_unified_diff,
 };
 
 /// Review data for web template rendering.
@@ -177,11 +177,11 @@ fn append_untracked(repo: &RepoRoot, mut patch: String) -> Result<String> {
             repo.path(),
             &["diff", "--no-color", "--no-index", "/dev/null", path_str],
         );
-        if let Ok(extra) = extra {
-            if !extra.trim().is_empty() {
-                patch.push('\n');
-                patch.push_str(&extra);
-            }
+        if let Ok(extra) = extra
+            && !extra.trim().is_empty()
+        {
+            patch.push('\n');
+            patch.push_str(&extra);
         }
     }
     Ok(patch)

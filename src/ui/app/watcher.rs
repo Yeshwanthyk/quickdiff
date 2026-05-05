@@ -1,6 +1,6 @@
 use super::App;
 use crate::core::ViewedStore;
-use crate::core::{list_changed_files, list_changed_files_from_base_with_merge_base, DiffSource};
+use crate::core::{DiffSource, list_changed_files, list_changed_files_from_base_with_merge_base};
 
 impl App {
     /// Poll the file watcher for changes and refresh the file list when needed.

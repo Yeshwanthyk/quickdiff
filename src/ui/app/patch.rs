@@ -1,8 +1,8 @@
 //! Patch mode handling.
 
 use super::App;
-use crate::core::{parse_unified_diff, ChangedFile, DiffResult, TextBuffer};
-use crate::highlight::{query_scopes, LanguageId};
+use crate::core::{ChangedFile, DiffResult, TextBuffer, parse_unified_diff};
+use crate::highlight::{LanguageId, query_scopes};
 
 impl App {
     /// Load a unified diff patch and enter patch mode.
@@ -88,12 +88,11 @@ impl App {
         self.viewer.scroll_y = 0;
 
         // Jump to first hunk if available
-        if let Some(diff) = self.diff.as_ref() {
-            if let Some(first) = diff.hunks().first() {
-                if let Some(view_row) = self.diff_row_to_view_row(first.start_row) {
-                    self.viewer.scroll_y = view_row;
-                }
-            }
+        if let Some(diff) = self.diff.as_ref()
+            && let Some(first) = diff.hunks().first()
+            && let Some(view_row) = self.diff_row_to_view_row(first.start_row)
+        {
+            self.viewer.scroll_y = view_row;
         }
 
         self.viewer.scroll_x = 0;

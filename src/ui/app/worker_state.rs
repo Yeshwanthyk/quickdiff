@@ -1,5 +1,5 @@
 use super::super::worker::{
-    spawn_diff_worker, spawn_pr_worker, DiffLoadRequest, DiffWorker, PrWorker,
+    DiffLoadRequest, DiffWorker, PrWorker, spawn_diff_worker, spawn_pr_worker,
 };
 use crate::core::{PullRequest, RepoRoot, RepoWatcher};
 

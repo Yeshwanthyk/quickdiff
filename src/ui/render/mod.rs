@@ -12,9 +12,9 @@ mod overlays;
 mod sidebar;
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout},
     widgets::Block,
-    Frame,
 };
 
 use super::app::{App, Mode};
@@ -22,7 +22,7 @@ use super::app::{App, Mode};
 // Re-export for potential external use
 #[allow(unused_imports)]
 pub use helpers::{
-    build_path_cache, SpanBuilder, ThemeStyles, GUTTER_WIDTH, SIDEBAR_PATH_WIDTH, TAB_WIDTH,
+    GUTTER_WIDTH, SIDEBAR_PATH_WIDTH, SpanBuilder, TAB_WIDTH, ThemeStyles, build_path_cache,
 };
 
 /// Main render function.

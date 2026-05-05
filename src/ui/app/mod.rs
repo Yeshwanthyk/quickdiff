@@ -3,16 +3,16 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::core::{
-    diff_source_display, list_changed_files, list_changed_files_between,
+    ChangedFile, CommentContext, CommentStore, DiffResult, DiffSource, FileCommentStore,
+    FileViewedStore, FuzzyMatcher, RelPath, RepoRoot, RepoWatcher, TextBuffer, ViewPreferences,
+    ViewedStore, diff_source_display, list_changed_files, list_changed_files_between,
     list_changed_files_from_base_with_merge_base, list_commit_files, resolve_revision,
-    save_global_preferences, ChangedFile, CommentContext, CommentStore, DiffResult, DiffSource,
-    FileCommentStore, FileViewedStore, FuzzyMatcher, RelPath, RepoRoot, RepoWatcher, TextBuffer,
-    ViewPreferences, ViewedStore,
+    save_global_preferences,
 };
 use crate::highlight::{FileHighlightCache, HighlighterCache, LanguageId, ScopeInfo};
 use crate::theme::Theme;
 
-use super::render::{build_path_cache, ThemeStyles};
+use super::render::{ThemeStyles, build_path_cache};
 
 mod comments;
 mod diff;
@@ -223,10 +223,10 @@ impl App {
             source,
             DiffSource::FilePair { .. } | DiffSource::DiffTool { .. }
         ) && file_filter.is_some();
-        if source.is_repo_backed() {
-            if let Some(ref filter) = file_filter {
-                files.retain(|f| f.path.as_str().contains(filter));
-            }
+        if source.is_repo_backed()
+            && let Some(ref filter) = file_filter
+        {
+            files.retain(|f| f.path.as_str().contains(filter));
         }
 
         let viewed = FileViewedStore::new(repo.as_str())?;
@@ -306,12 +306,11 @@ impl App {
         }
 
         // Restore last selected file if available (only for working tree mode)
-        if matches!(app.source, DiffSource::WorkingTree) {
-            if let Some(last) = app.viewed.last_selected() {
-                if let Some(idx) = app.files.iter().position(|f| f.path.as_str() == last) {
-                    app.sidebar.selected_idx = idx;
-                }
-            }
+        if matches!(app.source, DiffSource::WorkingTree)
+            && let Some(last) = app.viewed.last_selected()
+            && let Some(idx) = app.files.iter().position(|f| f.path.as_str() == last)
+        {
+            app.sidebar.selected_idx = idx;
         }
 
         // Load initial diff if there are files

@@ -181,16 +181,16 @@ impl Theme {
         ];
 
         // Add user themes
-        if let Some(dir) = user_themes_dir() {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    if let Some(name) = entry.path().file_stem() {
-                        if entry.path().extension().is_some_and(|e| e == "json") {
-                            let name = name.to_string_lossy().to_string();
-                            if !themes.contains(&name) {
-                                themes.push(name);
-                            }
-                        }
+        if let Some(dir) = user_themes_dir()
+            && let Ok(entries) = std::fs::read_dir(dir)
+        {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.path().file_stem()
+                    && entry.path().extension().is_some_and(|e| e == "json")
+                {
+                    let name = name.to_string_lossy().to_string();
+                    if !themes.contains(&name) {
+                        themes.push(name);
                     }
                 }
             }

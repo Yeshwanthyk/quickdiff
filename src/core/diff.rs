@@ -670,11 +670,10 @@ mod tests {
                 }
 
                 // prev_hunk from end should give last hunk (if any)
-                if result.row_count() > 0 {
-                    if let Some(last) = result.prev_hunk_row(result.row_count()) {
+                if result.row_count() > 0
+                    && let Some(last) = result.prev_hunk_row(result.row_count()) {
                         prop_assert!(last < result.row_count());
                     }
-                }
             }
         }
     }

@@ -1,11 +1,11 @@
 //! Top and bottom bar rendering.
 
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 
 use crate::core::FileChangeKind;
@@ -88,19 +88,17 @@ pub fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Open comments for this file (only in worktree mode)
-    if app.is_worktree_mode() {
-        if let Some(file) = file {
-            if let Some(count) = app.open_comment_counts.get(&file.path) {
-                if *count > 0 {
-                    spans.push(Span::styled(
-                        format!("  {} comments", count),
-                        Style::default()
-                            .fg(app.theme.accent)
-                            .bg(app.theme.bg_elevated),
-                    ));
-                }
-            }
-        }
+    if app.is_worktree_mode()
+        && let Some(file) = file
+        && let Some(count) = app.open_comment_counts.get(&file.path)
+        && *count > 0
+    {
+        spans.push(Span::styled(
+            format!("  {} comments", count),
+            Style::default()
+                .fg(app.theme.accent)
+                .bg(app.theme.bg_elevated),
+        ));
     }
 
     // Build right-aligned hunk indicator

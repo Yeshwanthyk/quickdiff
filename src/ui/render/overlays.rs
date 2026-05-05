@@ -1,11 +1,11 @@
 //! Modal overlay rendering (comments, theme selector, help, PR picker).
 
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 
 use crate::core::CommentStatus;

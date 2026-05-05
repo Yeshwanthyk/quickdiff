@@ -24,12 +24,11 @@ impl App {
             .filtered_indices
             .iter()
             .position(|&i| i == self.sidebar.selected_idx)
+            && pos > 0
         {
-            if pos > 0 {
-                self.sidebar.selected_idx = self.sidebar.filtered_indices[pos - 1];
-                self.request_current_diff();
-                self.ui.dirty = true;
-            }
+            self.sidebar.selected_idx = self.sidebar.filtered_indices[pos - 1];
+            self.request_current_diff();
+            self.ui.dirty = true;
         }
     }
 
@@ -46,12 +45,11 @@ impl App {
             .filtered_indices
             .iter()
             .position(|&i| i == self.sidebar.selected_idx)
+            && pos + 1 < self.sidebar.filtered_indices.len()
         {
-            if pos + 1 < self.sidebar.filtered_indices.len() {
-                self.sidebar.selected_idx = self.sidebar.filtered_indices[pos + 1];
-                self.request_current_diff();
-                self.ui.dirty = true;
-            }
+            self.sidebar.selected_idx = self.sidebar.filtered_indices[pos + 1];
+            self.request_current_diff();
+            self.ui.dirty = true;
         }
     }
 

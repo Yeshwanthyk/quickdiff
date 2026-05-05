@@ -10,16 +10,16 @@ use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::prelude::*;
 
 use quickdiff::cli::run_comments_command;
 use quickdiff::core::{
-    load_preferences, looks_like_unified_diff, read_stdin_text, ConfigOverrides, DiffSource,
-    RepoRoot, VcsPreference,
+    ConfigOverrides, DiffSource, RepoRoot, VcsPreference, load_preferences,
+    looks_like_unified_diff, read_stdin_text,
 };
-use quickdiff::ui::{handle_input, render, App};
+use quickdiff::ui::{App, handle_input, render};
 
 /// A git/jj-first terminal diff viewer.
 #[derive(Parser, Debug)]

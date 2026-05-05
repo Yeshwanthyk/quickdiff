@@ -4,8 +4,8 @@ use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
 
 use crate::core::{
-    get_pr_diff, list_prs, load_diff_contents, ChangedFile, DiffResult, DiffSource, PRFilter,
-    PullRequest, RepoRoot, TextBuffer,
+    ChangedFile, DiffResult, DiffSource, PRFilter, PullRequest, RepoRoot, TextBuffer, get_pr_diff,
+    list_prs, load_diff_contents,
 };
 
 #[derive(Debug, Clone)]
@@ -67,10 +67,10 @@ impl Drop for DiffWorker {
         // Drop the sender first to close the channel and unblock recv()
         drop(self.request_tx.take());
         // Now the worker thread will exit, so we can join it
-        if let Some(handle) = self.handle.take() {
-            if handle.join().is_err() {
-                eprintln!("Warning: diff worker thread panicked while joining");
-            }
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err()
+        {
+            eprintln!("Warning: diff worker thread panicked while joining");
         }
     }
 }
@@ -202,10 +202,10 @@ pub(crate) fn spawn_pr_worker(repo: RepoRoot) -> PrWorker {
 impl Drop for PrWorker {
     fn drop(&mut self) {
         drop(self.request_tx.take());
-        if let Some(handle) = self.handle.take() {
-            if handle.join().is_err() {
-                eprintln!("Warning: PR worker thread panicked while joining");
-            }
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err()
+        {
+            eprintln!("Warning: PR worker thread panicked while joining");
         }
     }
 }

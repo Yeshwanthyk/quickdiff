@@ -1,7 +1,7 @@
 mod fixtures;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use quickdiff::highlight::{query_scopes, FileHighlightCache, HighlighterCache, LanguageId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use quickdiff::highlight::{FileHighlightCache, HighlighterCache, LanguageId, query_scopes};
 
 fn bench_highlight_compute(c: &mut Criterion) {
     let mut group = c.benchmark_group("highlight_compute");

@@ -1,8 +1,8 @@
 //! Fuzzy matching for file path filtering.
 
 use nucleo_matcher::{
-    pattern::{AtomKind, CaseMatching, Normalization, Pattern},
     Config, Matcher, Utf32Str,
+    pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
 
 /// Fuzzy matcher wrapping nucleo-matcher.

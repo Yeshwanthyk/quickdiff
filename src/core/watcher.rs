@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
 use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
+use notify_debouncer_mini::{DebounceEventResult, new_debouncer};
 
 use super::RepoRoot;
 

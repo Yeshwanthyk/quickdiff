@@ -38,8 +38,11 @@ impl TestEnv {
         let prev_home = std::env::var("HOME").ok();
         let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
         let home_dir = TempDir::new().unwrap();
-        std::env::set_var("HOME", home_dir.path());
-        std::env::set_var("XDG_CONFIG_HOME", home_dir.path());
+        // Safety: env mutation is serialized via ENV_GUARD above.
+        unsafe {
+            std::env::set_var("HOME", home_dir.path());
+            std::env::set_var("XDG_CONFIG_HOME", home_dir.path());
+        }
         Self {
             _guard: guard,
             prev_home,
@@ -51,16 +54,19 @@ impl TestEnv {
 
 impl Drop for TestEnv {
     fn drop(&mut self) {
-        if let Some(prev) = &self.prev_home {
-            std::env::set_var("HOME", prev);
-        } else {
-            std::env::remove_var("HOME");
-        }
+        // Safety: env mutation is serialized via ENV_GUARD held in `_guard`.
+        unsafe {
+            if let Some(prev) = &self.prev_home {
+                std::env::set_var("HOME", prev);
+            } else {
+                std::env::remove_var("HOME");
+            }
 
-        if let Some(prev) = &self.prev_xdg {
-            std::env::set_var("XDG_CONFIG_HOME", prev);
-        } else {
-            std::env::remove_var("XDG_CONFIG_HOME");
+            if let Some(prev) = &self.prev_xdg {
+                std::env::set_var("XDG_CONFIG_HOME", prev);
+            } else {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
         }
     }
 }
@@ -128,10 +134,16 @@ impl GhFixture {
             Some(path) if !path.is_empty() => format!("{}:{}", dir.path().display(), path),
             _ => dir.path().display().to_string(),
         };
-        std::env::set_var("PATH", &new_path);
+        // Safety: env mutation is serialized via GH_GUARD held in `_guard`.
+        unsafe {
+            std::env::set_var("PATH", &new_path);
+        }
 
         let prev_data_dir = std::env::var("QUICKDIFF_TEST_GH_DIR").ok();
-        std::env::set_var("QUICKDIFF_TEST_GH_DIR", dir.path());
+        // Safety: see above.
+        unsafe {
+            std::env::set_var("QUICKDIFF_TEST_GH_DIR", dir.path());
+        }
 
         Self {
             _guard: guard,
@@ -166,16 +178,19 @@ impl GhFixture {
 #[cfg(unix)]
 impl Drop for GhFixture {
     fn drop(&mut self) {
-        if let Some(prev) = &self.prev_path {
-            std::env::set_var("PATH", prev);
-        } else {
-            std::env::remove_var("PATH");
-        }
+        // Safety: env mutation is serialized via GH_GUARD held in `_guard`.
+        unsafe {
+            if let Some(prev) = &self.prev_path {
+                std::env::set_var("PATH", prev);
+            } else {
+                std::env::remove_var("PATH");
+            }
 
-        if let Some(prev) = &self.prev_data_dir {
-            std::env::set_var("QUICKDIFF_TEST_GH_DIR", prev);
-        } else {
-            std::env::remove_var("QUICKDIFF_TEST_GH_DIR");
+            if let Some(prev) = &self.prev_data_dir {
+                std::env::set_var("QUICKDIFF_TEST_GH_DIR", prev);
+            } else {
+                std::env::remove_var("QUICKDIFF_TEST_GH_DIR");
+            }
         }
     }
 }
@@ -650,9 +665,11 @@ fn gh_fixture_handles_list_and_diff() {
         .output()
         .unwrap();
     assert!(diff.status.success());
-    assert!(String::from_utf8(diff.stdout)
-        .unwrap()
-        .contains("diff --git"));
+    assert!(
+        String::from_utf8(diff.stdout)
+            .unwrap()
+            .contains("diff --git")
+    );
 }
 
 #[cfg(unix)]

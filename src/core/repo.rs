@@ -23,8 +23,8 @@ use jj_lib::commit::Commit as JjCommit;
 use jj_lib::config::StackedConfig;
 #[cfg(feature = "jj")]
 use jj_lib::conflicts::{
-    materialize_merge_result_to_bytes, try_materialize_file_conflict_value, ConflictMarkerStyle,
-    ConflictMaterializeOptions,
+    ConflictMarkerStyle, ConflictMaterializeOptions, materialize_merge_result_to_bytes,
+    try_materialize_file_conflict_value,
 };
 #[cfg(feature = "jj")]
 use jj_lib::files::FileMergeHunkLevel;
@@ -50,7 +50,7 @@ use jj_lib::time_util::DatePatternContext;
 #[cfg(feature = "jj")]
 use jj_lib::tree_merge::MergeOptions;
 #[cfg(feature = "jj")]
-use jj_lib::workspace::{default_working_copy_factories, Workspace};
+use jj_lib::workspace::{Workspace, default_working_copy_factories};
 #[cfg(feature = "jj")]
 use pollster::FutureExt;
 #[cfg(feature = "jj")]
@@ -924,18 +924,16 @@ pub fn list_changed_files(root: &RepoRoot) -> Result<Vec<ChangedFile>, RepoError
         let kind = status_to_change_kind(status);
 
         // Handle renames (check for both old and new paths)
-        if status.contains(Status::INDEX_RENAMED) || status.contains(Status::WT_RENAMED) {
-            if let Some(diff_delta) = entry.head_to_index() {
-                if let (Some(old), Some(new)) = (
-                    diff_delta.old_file().path().and_then(|p| p.to_str()),
-                    diff_delta.new_file().path().and_then(|p| p.to_str()),
-                ) {
-                    if old != new {
-                        files.push(ChangedFile::renamed(RelPath::new(old), RelPath::new(new)));
-                        continue;
-                    }
-                }
-            }
+        if (status.contains(Status::INDEX_RENAMED) || status.contains(Status::WT_RENAMED))
+            && let Some(diff_delta) = entry.head_to_index()
+            && let (Some(old), Some(new)) = (
+                diff_delta.old_file().path().and_then(|p| p.to_str()),
+                diff_delta.new_file().path().and_then(|p| p.to_str()),
+            )
+            && old != new
+        {
+            files.push(ChangedFile::renamed(RelPath::new(old), RelPath::new(new)));
+            continue;
         }
 
         files.push(ChangedFile::new(RelPath::new(path), kind));
@@ -1406,14 +1404,14 @@ pub fn list_changed_files_between(
             git2::Delta::Deleted => FileChangeKind::Deleted,
             git2::Delta::Modified => FileChangeKind::Modified,
             git2::Delta::Renamed | git2::Delta::Copied => {
-                if let Some(old) = old_path {
-                    if old != new_path {
-                        files.push(ChangedFile::renamed(
-                            RelPath::new(old),
-                            RelPath::new(new_path),
-                        ));
-                        continue;
-                    }
+                if let Some(old) = old_path
+                    && old != new_path
+                {
+                    files.push(ChangedFile::renamed(
+                        RelPath::new(old),
+                        RelPath::new(new_path),
+                    ));
+                    continue;
                 }
                 FileChangeKind::Modified
             }
@@ -1556,28 +1554,27 @@ pub fn diff_source_display(source: &DiffSource, root: &RepoRoot) -> String {
             if root.is_jj() {
                 #[cfg(feature = "jj")]
                 {
-                    if let Ok(repo) = JjRepo::open(root.path()) {
-                        if let Ok(commit) = repo.resolve_single_commit(c) {
-                            let change_id = commit.change_id().hex();
-                            let summary = commit.description().lines().next().unwrap_or("");
-                            let msg = format!("{} {}", take_chars(&change_id, 8), summary);
-                            return truncate_chars(&msg, 50);
-                        }
+                    if let Ok(repo) = JjRepo::open(root.path())
+                        && let Ok(commit) = repo.resolve_single_commit(c)
+                    {
+                        let change_id = commit.change_id().hex();
+                        let summary = commit.description().lines().next().unwrap_or("");
+                        let msg = format!("{} {}", take_chars(&change_id, 8), summary);
+                        return truncate_chars(&msg, 50);
                     }
                 }
                 return format!("Commit {}", take_chars(c, 7));
             }
 
             // Try to get short commit message using git2
-            if let Ok(repo) = Repository::open(root.path()) {
-                if let Ok(obj) = repo.revparse_single(c) {
-                    if let Ok(commit) = obj.peel_to_commit() {
-                        let short_id = &commit.id().to_string()[..7];
-                        let summary = commit.summary().unwrap_or("");
-                        let msg = format!("{} {}", short_id, summary);
-                        return truncate_chars(&msg, 50);
-                    }
-                }
+            if let Ok(repo) = Repository::open(root.path())
+                && let Ok(obj) = repo.revparse_single(c)
+                && let Ok(commit) = obj.peel_to_commit()
+            {
+                let short_id = &commit.id().to_string()[..7];
+                let summary = commit.summary().unwrap_or("");
+                let msg = format!("{} {}", short_id, summary);
+                return truncate_chars(&msg, 50);
             }
             format!("Commit {}", take_chars(c, 7))
         }

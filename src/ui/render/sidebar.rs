@@ -1,11 +1,11 @@
 //! Sidebar file list rendering.
 
 use ratatui::{
+    Frame,
     layout::Rect,
     style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use crate::core::{FileChangeKind, ViewedStore};

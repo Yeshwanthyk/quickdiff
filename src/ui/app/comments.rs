@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use super::{App, CommentViewItem, Focus, Mode};
 use crate::core::{
-    format_anchor_summary, selector_from_hunk, Anchor, CommentStatus, CommentStore,
-    FileCommentStore, Selector,
+    Anchor, CommentStatus, CommentStore, FileCommentStore, Selector, format_anchor_summary,
+    selector_from_hunk,
 };
 
 impl App {

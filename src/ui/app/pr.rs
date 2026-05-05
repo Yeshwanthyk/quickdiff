@@ -2,10 +2,10 @@ use super::super::worker::{PrRequest, PrResponse};
 use super::{App, Mode, PRActionType};
 use crate::core::DiffResult;
 use crate::core::{
-    approve_pr, comment_pr, list_changed_files, open_pr_in_browser, parse_unified_diff,
-    request_changes_pr, ChangedFile, DiffSource, PullRequest, TextBuffer,
+    ChangedFile, DiffSource, PullRequest, TextBuffer, approve_pr, comment_pr, list_changed_files,
+    open_pr_in_browser, parse_unified_diff, request_changes_pr,
 };
-use crate::highlight::{query_scopes, LanguageId};
+use crate::highlight::{LanguageId, query_scopes};
 
 impl App {
     pub(crate) fn send_pr_request(&mut self, req: PrRequest) -> bool {
@@ -512,12 +512,11 @@ impl App {
         self.rebuild_view_rows();
         self.viewer.scroll_y = 0;
 
-        if let Some(diff) = self.diff.as_ref() {
-            if let Some(first) = diff.hunks().first() {
-                if let Some(view_row) = self.diff_row_to_view_row(first.start_row) {
-                    self.viewer.scroll_y = view_row;
-                }
-            }
+        if let Some(diff) = self.diff.as_ref()
+            && let Some(first) = diff.hunks().first()
+            && let Some(view_row) = self.diff_row_to_view_row(first.start_row)
+        {
+            self.viewer.scroll_y = view_row;
         }
 
         self.viewer.scroll_x = 0;

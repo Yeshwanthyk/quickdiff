@@ -274,9 +274,11 @@ mod tests {
         assert_eq!(id, 1);
         assert_eq!(store.list(false).len(), 1);
         assert_eq!(store.list(false)[0].message, "Fix this");
-        assert!(store.list(false)[0]
-            .context
-            .matches(&CommentContext::Worktree));
+        assert!(
+            store.list(false)[0]
+                .context
+                .matches(&CommentContext::Worktree)
+        );
     }
 
     #[test]

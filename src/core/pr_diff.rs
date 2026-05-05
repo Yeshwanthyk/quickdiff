@@ -31,10 +31,10 @@ pub fn parse_unified_diff(raw_diff: &str) -> Vec<PRChangedFile> {
         // "diff --git" at the start of a line marks a new file boundary
         if line.starts_with("diff --git ") {
             // Process previous chunk if non-empty
-            if !current_chunk.is_empty() {
-                if let Some(file) = parse_file_chunk(&current_chunk) {
-                    files.push(file);
-                }
+            if !current_chunk.is_empty()
+                && let Some(file) = parse_file_chunk(&current_chunk)
+            {
+                files.push(file);
             }
             current_chunk = line.to_string();
             current_chunk.push('\n');
@@ -45,10 +45,10 @@ pub fn parse_unified_diff(raw_diff: &str) -> Vec<PRChangedFile> {
     }
 
     // Process final chunk
-    if !current_chunk.is_empty() {
-        if let Some(file) = parse_file_chunk(&current_chunk) {
-            files.push(file);
-        }
+    if !current_chunk.is_empty()
+        && let Some(file) = parse_file_chunk(&current_chunk)
+    {
+        files.push(file);
     }
 
     // Sort by path for consistent ordering

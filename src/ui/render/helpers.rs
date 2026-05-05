@@ -60,11 +60,7 @@ pub fn sanitize_char(c: char) -> char {
 
 pub fn tab_width_at(col: usize) -> usize {
     let rem = col % TAB_WIDTH;
-    if rem == 0 {
-        TAB_WIDTH
-    } else {
-        TAB_WIDTH - rem
-    }
+    if rem == 0 { TAB_WIDTH } else { TAB_WIDTH - rem }
 }
 
 pub fn visible_tab_spaces(col: usize, scroll_x: usize, remaining: usize) -> (usize, usize) {
@@ -102,11 +98,7 @@ pub fn is_muted_color(color: Color) -> bool {
 }
 
 pub fn boost_muted_fg(fg: Color, default_fg: Color) -> Color {
-    if is_muted_color(fg) {
-        default_fg
-    } else {
-        fg
-    }
+    if is_muted_color(fg) { default_fg } else { fg }
 }
 
 pub fn truncate_str(s: &str, max_len: usize) -> String {

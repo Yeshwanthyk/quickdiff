@@ -4,6 +4,11 @@ All notable changes to quickdiff are documented here.
 
 ## [Unreleased]
 
+## [0.8.2] - 2025-05-05
+
+### Changed
+- Migrated to Rust edition 2024. Mutex-guarded test helpers that mutate `std::env` are now wrapped in `unsafe {}` blocks (env-mutation became unsafe in edition 2024). Lots of small cleanups from `cargo fix --edition` and let-chain collapse.
+
 ## [0.8.1] - 2025-05-05
 
 ### Changed
