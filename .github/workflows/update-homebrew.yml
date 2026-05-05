@@ -1,8 +1,9 @@
+# Manual recovery workflow. The Release workflow normally updates the
+# Homebrew formula automatically; use this if you need to re-run it for
+# an existing release tag.
 name: Update Homebrew Formula
 
 on:
-  release:
-    types: [created, published]
   workflow_dispatch:
     inputs:
       version:
