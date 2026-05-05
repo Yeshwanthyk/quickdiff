@@ -2,7 +2,7 @@
 name = "quickdiff"
 version = "0.8.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.89"
 license = "MIT"
 description = "A fast, keyboard-driven terminal diff viewer for git and jj"
 repository = "https://github.com/Yeshwanthyk/quickdiff"

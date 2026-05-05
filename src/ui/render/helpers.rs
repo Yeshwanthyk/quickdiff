@@ -199,7 +199,7 @@ impl SpanBuilder {
             self.flush();
             self.pending_style = Some(style);
         }
-        self.pending_text.extend(std::iter::repeat(' ').take(count));
+        self.pending_text.extend(std::iter::repeat_n(' ', count));
     }
 
     fn flush(&mut self) {
