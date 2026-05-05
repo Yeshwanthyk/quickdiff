@@ -1,4 +1,4 @@
-msrv = "1.75"
+msrv = "1.85"
 avoid-breaking-exported-api = false
 check-inconsistent-struct-field-initializers = true
 lint-commented-code = true

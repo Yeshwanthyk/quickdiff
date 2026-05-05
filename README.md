@@ -64,17 +64,18 @@ Arguments:
 
 Options:
   -c, --commit <COMMIT>  Show changes from a specific commit
-  -b, --base <BRANCH>    Compare against merge-base with a branch
+  -b, --base <BRANCH>    Compare against a base branch (e.g., origin/main)
   -f, --file <PATH>      Filter to specific file(s)
   -t, --theme <THEME>    Color theme
-      --stdin            Read unified diff from stdin
+      --stdin            Read unified diff from stdin (pager mode)
       --pr [NUMBER]      Browse GitHub pull requests
+      --vcs <TYPE>       Force VCS backend: git or jj (default: auto-detect)
   -h, --help             Print help
   -V, --version          Print version
 
 Subcommands:
   web       Generate standalone HTML diff
-  comments  Manage review comments
+  comments  Manage review comments (list, add, import, next, resolve)
 ```
 
 ## Navigation
@@ -88,14 +89,20 @@ Subcommands:
 | `{` / `}` | Jump to prev/next hunk |
 | `g` / `G` | Go to start/end |
 | `z` | Toggle full file / hunks only |
+| `w` / `n` | Toggle wrap / line numbers |
 | `/` | Fuzzy filter files |
-| `Tab` | Switch pane focus |
+| `Tab` / `1` / `2` | Switch focus (sidebar / diff) |
+| `s` | Toggle sidebar visibility |
 | `[` / `]` | Fullscreen old/new pane |
+| `r` | Manual reload |
 | `y` | Copy file path |
 | `o` | Open in editor |
 | `T` | Theme picker |
+| `c` / `C` | Add / view review comments (worktree mode) |
+| `P` | Open PR picker / exit PR mode |
+| `A` / `R` / `O` | Approve / request changes / open PR in browser |
 | `?` | Help |
-| `q` | Quit |
+| `q` / `Ctrl+C` | Quit |
 
 ## Features
 
@@ -136,6 +143,33 @@ quickdiff @-             # Parent
 quickdiff @-..@          # Working copy changes
 quickdiff main..@        # Branch comparison
 ```
+
+Force a specific backend with `--vcs git` or `--vcs jj` if auto-detection picks the wrong one.
+
+## Pull Request Review
+
+Browse and review GitHub PRs without leaving the terminal (requires the `gh` CLI):
+
+```bash
+quickdiff --pr            # Pick from open PRs
+quickdiff --pr 123        # Open a specific PR
+```
+
+In PR mode, `A` approves, `R` requests changes, and `O` opens the PR in your browser. Press `P` again to exit PR mode.
+
+## Review Comments
+
+Leave inline comments on a diff and manage them from the CLI:
+
+```bash
+quickdiff comments list --all
+quickdiff comments add --path src/main.rs --new-line 42 --message "nit: rename this"
+quickdiff comments next            # Jump to the next unresolved comment
+quickdiff comments resolve <id>
+quickdiff comments import --json review.json
+```
+
+In the TUI (worktree mode), press `c` to add a comment on the current line and `C` to view existing comments.
 
 ## Development
 

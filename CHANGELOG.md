@@ -4,6 +4,20 @@ All notable changes to quickdiff are documented here.
 
 ## [Unreleased]
 
+## [0.8.0] - 2025-05-03
+
+### Added
+- `--vcs <TYPE>` flag to force the git or jj backend instead of relying on auto-detection.
+- `s` toggles sidebar visibility for a wider diff pane.
+- Review comments: `comments import --json` for bulk import, `comments next` to jump to the next unresolved comment, and hunk-digest indexing so comments survive minor diff churn.
+- Improved comment editing UI in the TUI.
+- Foundations for user preferences, pager mode, and standalone file comparison.
+- Repository lint policy (`clippy.toml`, `deny.toml`) and slop-scan rules for ongoing code health.
+
+### Changed
+- Split diff collapses to a single pane on narrow terminals.
+- General polish to the diff pane rendering.
+
 ## [0.7.5] - 2025-01-12
 
 ### Added
