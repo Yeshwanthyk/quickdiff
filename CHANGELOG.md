@@ -4,6 +4,16 @@ All notable changes to quickdiff are documented here.
 
 ## [Unreleased]
 
+## [0.8.1] - 2025-05-05
+
+### Changed
+- Bumped pinned Rust toolchain to 1.89 (required by `jj-lib` 0.36 and `Cargo.lock` v4); release CI on the previous 1.75 pin could no longer parse the lockfile.
+- Homebrew formula update is now chained into the release workflow so tag pushes publish binaries and refresh the Homebrew tap in a single run. The standalone `update-homebrew` workflow is kept for manual recovery only.
+
+### Fixed
+- Replaced `repeat().take()` with `repeat_n()` in the diff renderer to satisfy the new clippy lint surfaced by the toolchain bump.
+- Documented `--vcs`, missing keybindings (`w`, `n`, `s`, `r`, `1`/`2`, `c`/`C`, `P`, `A`/`R`/`O`), the PR review workflow, and the `comments` subcommand in the README.
+
 ## [0.8.0] - 2025-05-03
 
 ### Added
